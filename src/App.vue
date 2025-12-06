@@ -107,32 +107,6 @@ const bufferSource2bytes = (source: BufferSource): Uint8Array => {
   if (source instanceof ArrayBuffer) return new Uint8Array(source)
   else return new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
 }
-// const bytes2mnemonic = async (bytes: Uint8Array, wordlist: string[]): Promise<string> => {
-//   const BYTE_LENGTH = 32
-//   const ENTROPY_LENGTH = BYTE_LENGTH * 8
-//   const CHECKSUM_LENGTH = ENTROPY_LENGTH / 32
-//   if (bytes.length !== BYTE_LENGTH) throw new Error(`Expected ${BYTE_LENGTH} bytes of entropy, got ${bytes.length}`)
-//   const entropyBits = bytes2binary(bytes) // 256bit "010101..."
-//   const hashBuf = await crypto.subtle.digest('SHA-256', new Uint8Array(bytes))
-//   const hashBits = bytes2binary(new Uint8Array(hashBuf))
-//   const checksumBits = hashBits.slice(0, CHECKSUM_LENGTH)
-//   const bits = entropyBits + checksumBits // 264bit
-//   const wordIndices: number[] = []
-//   for (let i = 0; i < bits.length; i += 11) {
-//     // 11bit = 1word
-//     const chunk = bits.slice(i, i + 11)
-//     const wordIndex = parseInt(chunk, 2)
-//     wordIndices.push(wordIndex)
-//   }
-//   const words = wordIndices.map((index) => wordlist[index])
-//   return words.join(' ')
-// }
-// const bytes2binary = (bytes: Uint8Array): string => {
-//   return Array.from(bytes)
-//     .map((byte) => byte.toString(2).padStart(8, '0'))
-//     .join('')
-// }
-//const bytes2hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
 </script>
 
 <style scoped></style>
