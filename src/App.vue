@@ -4,25 +4,45 @@
     <p class="subtitle">Passkey を使ってモナコインのウォレットを生成するサンプルです</p>
 
     <section class="card">
-      <h2>Passkey を登録</h2>
+      <h2>1. Passkey を登録する</h2>
       <p>ブラウザやデバイスに新しい Passkey を登録します</p>
       <button class="btn primary" @click="signUp">Create Passkey</button>
     </section>
 
     <section class="card">
-      <h2>ウォレットを開く</h2>
+      <h2>2. ウォレットを開く</h2>
       <p>登録済みの Passkey を使ってウォレットを復元します</p>
-      <button class="btn secondary" @click="signIn">Open Passkey Wallet</button>
+      <button class="btn primary" @click="signIn">Open Passkey Wallet</button>
 
-      <div v-if="isSignedIn" class="wallet">
+      <div v-if="wallet" class="wallet">
         <div class="field">
           <span class="label">Monacoin Address</span>
-          <code class="value monospace break">{{ address }}</code>
+          <code class="value monospace break">{{ wallet.address }}</code>
         </div>
         <div class="field">
           <span class="label">Derivation Path</span>
-          <code class="value monospace">{{ ADDRESS_PATH }}</code>
+          <code class="value monospace">{{ wallet.derivationPath }}</code>
         </div>
+
+        <div class="field">
+          <span class="label">Balance</span>
+          <span class="value monospace">
+            <span v-if="!isBalanceLoading">
+              {{ wallet.balance.toFixed(8) }} MONA
+              <span v-if="wallet.unconfBalance > 0"> (+{{ wallet.unconfBalance.toFixed(8) }} MONA unconfirmed) </span>
+            </span>
+            <span v-else class="loading-inline">
+              <span class="spinner"></span>
+              Loading...
+            </span>
+          </span>
+        </div>
+        <div class="field">
+          <button class="btn ghost" @click="refreshBalance" :disabled="isBalanceLoading">
+            {{ isBalanceLoading ? 'Updating...' : 'Update Balance' }}
+          </button>
+        </div>
+
         <div class="mnemonic-box">
           <button class="btn ghost" @click="toggleMnemonic">
             {{ isMnemonicOpen ? 'Hide Mnemonic' : 'Show Mnemonic' }}
@@ -42,74 +62,79 @@
 <script setup lang="ts">
 import '@/styles/wallet.css'
 import { ref, computed } from 'vue'
-import { HDKey } from '@scure/bip32'
-import * as bip39 from '@scure/bip39'
-import * as btc from '@scure/btc-signer'
-import { wordlist } from '@scure/bip39/wordlists/english.js'
-const ADDRESS_PATH = "m/84'/22'/0'/0/0" // BIP84 Monacoin
+import { MonaWallet } from '@/lib/monawallet'
+
 const WEBAUTHN_RPID = location.hostname
-const WEBAUTHN_RPNAME = 'RP_NAME'
+const WEBAUTHN_RPNAME = 'Passkey Monacoin Wallet'
 const WEBAUTHN_USERNAME = 'Passkey MONA User'
 const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
-const MONA_NETWORK = {
-  bech32: 'mona',
-  pubKeyHash: 0x32, // 50
-  scriptHash: 0x37, // 55
-  wif: 0xb0, // 176
-} as const
-const isSignedIn = ref(false)
+
 const isMnemonicOpen = ref(false)
-const address = ref('')
-const mnemonic = ref('')
-const mnemonicWords = computed(() => (mnemonic.value ? mnemonic.value.trim().split(/\s+/) : []))
+const isBalanceLoading = ref(false)
+const wallet = ref<MonaWallet | null>(null)
+const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
 
 const signUp = async () => {
-  const pubkeyOptions: PublicKeyCredentialCreationOptions = {
-    challenge: randomBytes(32),
-    rp: { id: WEBAUTHN_RPID, name: WEBAUTHN_RPNAME },
-    user: { id: randomBytes(32), name: WEBAUTHN_USERNAME, displayName: WEBAUTHN_USERNAME },
-    pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-    authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
-    attestation: 'none',
-    extensions: { prf: {} },
+  try {
+    const pubkeyOptions: PublicKeyCredentialCreationOptions = {
+      challenge: randomBytes(32),
+      rp: { id: WEBAUTHN_RPID, name: WEBAUTHN_RPNAME },
+      user: { id: randomBytes(32), name: WEBAUTHN_USERNAME, displayName: WEBAUTHN_USERNAME },
+      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
+      authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
+      attestation: 'none',
+      extensions: { prf: {} },
+    }
+    const webAuthnCredential = await navigator.credentials.create({ publicKey: pubkeyOptions })
+    if (!webAuthnCredential) throw new Error('Passkey Registration Failed')
+    if (!(webAuthnCredential instanceof PublicKeyCredential)) throw new Error(`Unexpected credential type: ${webAuthnCredential.type}`)
+    const credExtensions = webAuthnCredential.getClientExtensionResults()
+    if (!credExtensions.prf?.enabled) throw new Error('WebAuthn PRF extension not enabled')
+    alert('Passkey registration successful!')
+  } catch (error) {
+    console.error('SignUp error:', error)
+    alert(`Passkey registration failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
-  const webAuthnCredential = await navigator.credentials.create({ publicKey: pubkeyOptions })
-  if (!webAuthnCredential) return alert('Passkey Registration Failed')
-  if (!(webAuthnCredential instanceof PublicKeyCredential)) return alert(`Unexpected credential type: ${webAuthnCredential.type}`)
-  const credExtensions = webAuthnCredential.getClientExtensionResults()
-  if (!credExtensions.prf?.enabled) return alert('WebAuthn PRF extension not enabled')
 }
 const signIn = async () => {
-  const salt = await message2salt(WEBAUTHN_MESSAGETOHASH)
-  const pubkeyOptions: PublicKeyCredentialRequestOptions = {
-    challenge: randomBytes(32), // ウォレットで認証するのでチャレンジは適当で良い
-    rpId: WEBAUTHN_RPID,
-    userVerification: 'required',
-    extensions: {
-      prf: {
-        eval: { first: salt.buffer },
+  try {
+    const salt = await message2salt(WEBAUTHN_MESSAGETOHASH)
+    const pubkeyOptions: PublicKeyCredentialRequestOptions = {
+      challenge: randomBytes(32), // ウォレットで認証するのでチャレンジは適当で良い
+      rpId: WEBAUTHN_RPID,
+      userVerification: 'required',
+      extensions: {
+        prf: {
+          eval: { first: salt.buffer },
+        },
       },
-    },
+    }
+    const webAuthnCredential = await navigator.credentials.get({ publicKey: pubkeyOptions })
+    if (!webAuthnCredential) throw new Error('Passkey Sign Failed')
+    if (!(webAuthnCredential instanceof PublicKeyCredential)) throw new Error(`Unexpected credential type: ${webAuthnCredential.type}`)
+    const credExtensions = webAuthnCredential.getClientExtensionResults()
+    const prfResults = credExtensions.prf?.results
+    if (!prfResults || !prfResults.first) throw new Error('PRF result not available (passkey or platform may not support it)')
+    const prfOutput = bufferSource2bytes(prfResults.first)
+    wallet.value = new MonaWallet(prfOutput)
+    await refreshBalance()
+  } catch (error) {
+    console.error('SignIn error:', error)
+    alert(`Passkey sign-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
-  const webAuthnCredential = await navigator.credentials.get({ publicKey: pubkeyOptions })
-  if (!webAuthnCredential) return alert('Passkey Sign Failed')
-  if (!(webAuthnCredential instanceof PublicKeyCredential)) return alert(`Unexpected credential type: ${webAuthnCredential.type}`)
-  const credExtensions = webAuthnCredential.getClientExtensionResults()
-  const prfResults = credExtensions.prf?.results
-  if (!prfResults || !prfResults.first) return alert('PRF result not available (passkey or platform may not support it)')
-  const prfOutput = bufferSource2bytes(prfResults.first)
-  mnemonic.value = bip39.entropyToMnemonic(prfOutput, wordlist)
-  address.value = addressFromMnemonic(mnemonic.value)
-  isSignedIn.value = true
 }
-const addressFromMnemonic = (mnemonic: string): string => {
-  const seed = bip39.mnemonicToSeedSync(mnemonic)
-  const root = HDKey.fromMasterSeed(seed)
-  const child = root.derive(ADDRESS_PATH)
-  if (!child.publicKey) throw new Error('Failed to derive public key')
-  const p2wpkh = btc.p2wpkh(child.publicKey, MONA_NETWORK)
-  if (!p2wpkh.address) throw new Error('Failed to generate address')
-  return p2wpkh.address
+const refreshBalance = async () => {
+  const currentWallet = wallet.value
+  if (!currentWallet) return
+  isBalanceLoading.value = true
+  try {
+    await currentWallet.updateBalance()
+  } catch (error) {
+    console.error(error)
+    alert('Failed to update balance')
+  } finally {
+    isBalanceLoading.value = false
+  }
 }
 const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
