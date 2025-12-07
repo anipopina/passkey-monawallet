@@ -1,0 +1,14 @@
+{
+  "name": "Passkey Monacoin Wallet",
+  "short_name": "Passkey MONA",
+  "background_color": "#ffffff",
+  "theme_color": "#ff9900",
+  "description": "Passkey-based Monacoin wallet sample implementation",
+  "icons": [
+    {
+      "src": "/favicon.ico",
+      "sizes": "64x64",
+      "type": "image/x-icon"
+    }
+  ]
+}
