@@ -1,37 +1,55 @@
 <template>
-  <h1>Passkey Monacoin Wallet</h1>
-  <p>Passkey を使ってモナコインのウォレットを生成するサンプルです</p>
-  <hr />
-  <p>
-    <input v-model="usernameInput" type="text" placeholder="username" />
-    <button @click="signUp">Sign up</button>
-  </p>
-  <hr />
-  <p>
-    <button @click="signIn">Sign in</button>
-  </p>
-  <div v-if="isSignedIn">
-    <p>{{ ADDRESS_PATH }}</p>
-    <p>{{ address }}</p>
-  </div>
-  <hr />
-  <div v-if="isSignedIn">
-    <p>
-      <button @click="toggleMnemonic">{{ isMnemonicOpen ? 'Hide Mnemonic' : 'Show Mnemonic' }}</button>
-    </p>
-    <p v-if="isMnemonicOpen">{{ mnemonic }}</p>
+  <div class="app">
+    <h1>Passkey Monacoin Wallet</h1>
+    <p class="subtitle">Passkey を使ってモナコインのウォレットを生成するサンプルです</p>
+
+    <section class="card">
+      <h2>Passkey を登録</h2>
+      <p>ブラウザやデバイスに新しい Passkey を登録します</p>
+      <button class="btn primary" @click="signUp">Create Passkey</button>
+    </section>
+
+    <section class="card">
+      <h2>ウォレットを開く</h2>
+      <p>登録済みの Passkey を使ってウォレットを復元します</p>
+      <button class="btn secondary" @click="signIn">Open Passkey Wallet</button>
+
+      <div v-if="isSignedIn" class="wallet">
+        <div class="field">
+          <span class="label">Monacoin Address</span>
+          <code class="value monospace break">{{ address }}</code>
+        </div>
+        <div class="field">
+          <span class="label">Derivation Path</span>
+          <code class="value monospace">{{ ADDRESS_PATH }}</code>
+        </div>
+        <div class="mnemonic-box">
+          <button class="btn ghost" @click="toggleMnemonic">
+            {{ isMnemonicOpen ? 'Hide Mnemonic' : 'Show Mnemonic' }}
+          </button>
+          <div v-if="isMnemonicOpen" class="mnemonic-list">
+            <div v-for="(word, idx) in mnemonicWords" :key="idx" class="mnemonic-item monospace">
+              <span class="mnemonic-index">{{ idx + 1 }}.</span>
+              <span class="mnemonic-word">{{ word }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import '@/styles/wallet.css'
+import { ref, computed } from 'vue'
 import { HDKey } from '@scure/bip32'
 import * as bip39 from '@scure/bip39'
 import * as btc from '@scure/btc-signer'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
-const ADDRESS_PATH = "m/84'/22'/0'/0/0"
+const ADDRESS_PATH = "m/84'/22'/0'/0/0" // BIP84 Monacoin
 const WEBAUTHN_RPID = location.hostname
 const WEBAUTHN_RPNAME = 'RP_NAME'
+const WEBAUTHN_USERNAME = 'Passkey MONA User'
 const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
 const MONA_NETWORK = {
   bech32: 'mona',
@@ -39,18 +57,17 @@ const MONA_NETWORK = {
   scriptHash: 0x37, // 55
   wif: 0xb0, // 176
 } as const
-const usernameInput = ref()
 const isSignedIn = ref(false)
 const isMnemonicOpen = ref(false)
 const address = ref('')
 const mnemonic = ref('')
+const mnemonicWords = computed(() => (mnemonic.value ? mnemonic.value.trim().split(/\s+/) : []))
 
 const signUp = async () => {
-  const username = usernameInput.value || 'test-user'
   const pubkeyOptions: PublicKeyCredentialCreationOptions = {
     challenge: randomBytes(32),
     rp: { id: WEBAUTHN_RPID, name: WEBAUTHN_RPNAME },
-    user: { id: randomBytes(32), name: username, displayName: username },
+    user: { id: randomBytes(32), name: WEBAUTHN_USERNAME, displayName: WEBAUTHN_USERNAME },
     pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
     authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
     attestation: 'none',
@@ -65,7 +82,7 @@ const signUp = async () => {
 const signIn = async () => {
   const salt = await message2salt(WEBAUTHN_MESSAGETOHASH)
   const pubkeyOptions: PublicKeyCredentialRequestOptions = {
-    challenge: randomBytes(32),
+    challenge: randomBytes(32), // ウォレットで認証するのでチャレンジは適当で良い
     rpId: WEBAUTHN_RPID,
     userVerification: 'required',
     extensions: {
@@ -112,5 +129,3 @@ const bufferSource2bytes = (source: BufferSource): Uint8Array => {
   else return new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
 }
 </script>
-
-<style scoped></style>
