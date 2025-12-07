@@ -27,14 +27,18 @@
 import { ref } from 'vue'
 import { HDKey } from '@scure/bip32'
 import * as bip39 from '@scure/bip39'
-import * as bitcoinlib from 'bitcoinjs-lib'
-import * as coininfo from 'coininfo'
+import * as btc from '@scure/btc-signer'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 const ADDRESS_PATH = "m/84'/22'/0'/0/0"
 const WEBAUTHN_RPID = location.hostname
 const WEBAUTHN_RPNAME = 'RP_NAME'
 const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
-const MONA_NETWORK: bitcoinlib.Network = coininfo.monacoin.main.toBitcoinJS()
+const MONA_NETWORK = {
+  bech32: 'mona',
+  pubKeyHash: 0x32, // 50
+  scriptHash: 0x37, // 55
+  wif: 0xb0, // 176
+} as const
 const usernameInput = ref()
 const isSignedIn = ref(false)
 const isMnemonicOpen = ref(false)
@@ -86,9 +90,9 @@ const addressFromMnemonic = (mnemonic: string): string => {
   const root = HDKey.fromMasterSeed(seed)
   const child = root.derive(ADDRESS_PATH)
   if (!child.publicKey) throw new Error('Failed to derive public key')
-  const payment = bitcoinlib.payments.p2wpkh({ pubkey: Buffer.from(child.publicKey), network: MONA_NETWORK })
-  if (!payment.address) throw new Error('Failed to generate address')
-  return payment.address
+  const p2wpkh = btc.p2wpkh(child.publicKey, MONA_NETWORK)
+  if (!p2wpkh.address) throw new Error('Failed to generate address')
+  return p2wpkh.address
 }
 const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
