@@ -11,25 +11,44 @@
 
     <section class="card">
       <h2>2. ウォレットを開く</h2>
-      <p>登録済みの Passkey を使ってウォレットを復元します</p>
+      <p>登録済みの Passkey を使ってウォレットを生成します</p>
       <button class="btn primary" @click="signIn">Open Passkey Wallet</button>
+    </section>
 
-      <div v-if="wallet" class="wallet">
-        <div class="field">
-          <span class="label">Monacoin Address</span>
-          <code class="value monospace break">{{ wallet.address }}</code>
-        </div>
-        <div class="field">
-          <span class="label">Derivation Path</span>
-          <code class="value monospace">{{ wallet.derivationPath }}</code>
-        </div>
+    <section v-if="wallet" class="card">
+      <h2>Passkey Wallet Opened!</h2>
+      <p>Passkey から モナコイン / Monaparty のウォレットを生成しました</p>
 
+      <div class="field">
+        <span class="label">Monacoin Address</span>
+        <code class="value monospace break">{{ wallet.address }}</code>
+      </div>
+
+      <div class="field mnemonic-section">
+        <button class="btn danger" @click="toggleMnemonic">
+          {{ isMnemonicOpen ? 'Hide Mnemonic' : 'Show Mnemonic' }}
+        </button>
+        <div v-if="isMnemonicOpen" class="mnemonic-list">
+          <div v-for="(word, idx) in mnemonicWords" :key="idx" class="mnemonic-item monospace">
+            <span class="mnemonic-index">{{ idx + 1 }}.</span>
+            <span class="mnemonic-word">{{ word }}</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn" :class="{ active: !isMonapartyMode }" @click="isMonapartyMode = false">Monacoin</button>
+        <button class="tab-btn" :class="{ active: isMonapartyMode }" @click="isMonapartyMode = true">Monaparty</button>
+      </div>
+
+      <!-- Monacoin Tab -->
+      <div v-if="!isMonapartyMode" class="tab-content">
         <div class="field">
           <span class="label">Balance</span>
           <span class="value monospace">
             <span v-if="!isBalanceLoading">
               {{ wallet.balance.toFixed(8) }} MONA
-              <span v-if="wallet.unconfBalance > 0"> (+{{ wallet.unconfBalance.toFixed(8) }} MONA unconfirmed) </span>
+              <span v-if="wallet.unconfBalance > 0" class="unconf-balance"> (+{{ wallet.unconfBalance.toFixed(8) }} unconfirmed) </span>
             </span>
             <span v-else class="loading-inline">
               <span class="spinner"></span>
@@ -37,22 +56,40 @@
             </span>
           </span>
         </div>
+
         <div class="field">
-          <button class="btn ghost" @click="refreshBalance" :disabled="isBalanceLoading">
+          <button class="btn secondary" @click="refreshBalance" :disabled="isBalanceLoading">
             {{ isBalanceLoading ? 'Updating...' : 'Update Balance' }}
           </button>
         </div>
 
-        <div class="mnemonic-box">
-          <button class="btn ghost" @click="toggleMnemonic">
-            {{ isMnemonicOpen ? 'Hide Mnemonic' : 'Show Mnemonic' }}
-          </button>
-          <div v-if="isMnemonicOpen" class="mnemonic-list">
-            <div v-for="(word, idx) in mnemonicWords" :key="idx" class="mnemonic-item monospace">
-              <span class="mnemonic-index">{{ idx + 1 }}.</span>
-              <span class="mnemonic-word">{{ word }}</span>
-            </div>
-          </div>
+        <div class="divider"></div>
+
+        <h3>モナコインを送る</h3>
+
+        <div class="field">
+          <label class="label">Recipient Address</label>
+          <input v-model="sendToAddress" type="text" class="input" placeholder="Monacoin Address" />
+        </div>
+
+        <div class="field">
+          <label class="label">Amount (MONA)</label>
+          <input v-model.number="sendAmount" type="number" class="input" step="0.01" min="0" placeholder="0.00000000" />
+        </div>
+
+        <button class="btn primary" @click="sendMona" :disabled="isSending || !sendToAddress || !sendAmount">
+          <span v-if="!isSending">Send MONA</span>
+          <span v-else class="loading-inline">
+            <span class="spinner"></span>
+            Sending...
+          </span>
+        </button>
+      </div>
+
+      <!-- Monaparty Tab -->
+      <div v-else class="tab-content">
+        <div class="coming-soon">
+          <p>🚧 Monaparty features are coming soon!</p>
         </div>
       </div>
     </section>
@@ -73,6 +110,10 @@ const isMnemonicOpen = ref(false)
 const isBalanceLoading = ref(false)
 const wallet = ref<MonaWallet | null>(null)
 const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
+const sendToAddress = ref('')
+const sendAmount = ref(0)
+const isSending = ref(false)
+const isMonapartyMode = ref(false)
 
 const signUp = async () => {
   try {
@@ -90,12 +131,13 @@ const signUp = async () => {
     if (!(webAuthnCredential instanceof PublicKeyCredential)) throw new Error(`Unexpected credential type: ${webAuthnCredential.type}`)
     const credExtensions = webAuthnCredential.getClientExtensionResults()
     if (!credExtensions.prf?.enabled) throw new Error('WebAuthn PRF extension not enabled')
-    alert('Passkey registration successful!')
+    alert('Passkey の登録に成功しました！')
   } catch (error) {
     console.error('SignUp error:', error)
-    alert(`Passkey registration failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    alert(`Passkey の登録に失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
+
 const signIn = async () => {
   try {
     const salt = await message2salt(WEBAUTHN_MESSAGETOHASH)
@@ -120,9 +162,28 @@ const signIn = async () => {
     await refreshBalance()
   } catch (error) {
     console.error('SignIn error:', error)
-    alert(`Passkey sign-in failed: ${error instanceof Error ? error.message : 'Unknown error'}`)
+    alert(`Passkey でのサインインに失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`)
   }
 }
+
+const sendMona = async () => {
+  const currentWallet = wallet.value
+  if (!currentWallet) return
+  if (!confirm(`${sendAmount.value} MONA を ${sendToAddress.value} に送りますか？`)) return
+  isSending.value = true
+  try {
+    const txid = await currentWallet.sendMona(sendToAddress.value, sendAmount.value)
+    alert(`送金成功！\nTXID: ${txid}`)
+    sendToAddress.value = ''
+    sendAmount.value = 0
+  } catch (error) {
+    console.error('Send error:', error)
+    alert(`送金失敗: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  } finally {
+    isSending.value = false
+  }
+}
+
 const refreshBalance = async () => {
   const currentWallet = wallet.value
   if (!currentWallet) return
@@ -131,24 +192,28 @@ const refreshBalance = async () => {
     await currentWallet.updateBalance()
   } catch (error) {
     console.error(error)
-    alert('Failed to update balance')
+    alert('残高の更新に失敗しました')
   } finally {
     isBalanceLoading.value = false
   }
 }
+
 const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
 }
+
 const message2salt = async (message: string) => {
   const data = new TextEncoder().encode(message)
-  const digest = await crypto.subtle.digest('SHA-256', data) // 32byte
+  const digest = await crypto.subtle.digest('SHA-256', data)
   return new Uint8Array(digest)
 }
+
 const randomBytes = (len = 32) => {
   const buf = new Uint8Array(len)
   crypto.getRandomValues(buf)
   return buf
 }
+
 const bufferSource2bytes = (source: BufferSource): Uint8Array => {
   if (source instanceof ArrayBuffer) return new Uint8Array(source)
   else return new Uint8Array(source.buffer, source.byteOffset, source.byteLength)

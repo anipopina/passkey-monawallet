@@ -33,6 +33,11 @@ export async function getChainAddressInfo(
   return await monapartyRpc<ChainAddressInfo[]>('get_chain_address_info', params)
 }
 
+export async function broadcastTransaction(signedTxHex: string): Promise<string> {
+  const params = { signed_tx_hex: signedTxHex }
+  return await monapartyRpc<string>('broadcast_tx', params)
+}
+
 // #endregion APIWrappers
 
 async function monapartyRpc<T>(method: string, params: unknown): Promise<T> {

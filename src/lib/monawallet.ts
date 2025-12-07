@@ -4,6 +4,7 @@ import { HDKey } from '@scure/bip32'
 import * as bip39 from '@scure/bip39'
 import * as btcSigner from '@scure/btc-signer'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
+import { hex } from '@scure/base'
 import * as monaparty from './monaparty'
 
 const SATOSHI = 100_000_000
@@ -20,6 +21,7 @@ export class MonaWallet {
   readonly mnemonic: string // BIP39 24words
   readonly address: string // P2WPKH
   readonly derivationPath: string
+  private readonly hdKey: HDKey
   balance = 0
   unconfBalance = 0
   utxos: Utxo[] = []
@@ -32,6 +34,7 @@ export class MonaWallet {
     const root = HDKey.fromMasterSeed(seed)
     const child = root.derive(this.derivationPath)
     if (!child.publicKey) throw new Error('Failed to derive public key')
+    this.hdKey = child
     const p2wpkh = btcSigner.p2wpkh(child.publicKey, MONA_NETWORK)
     if (!p2wpkh.address) throw new Error('Failed to generate address')
     this.address = p2wpkh.address
@@ -45,12 +48,50 @@ export class MonaWallet {
     if (!Array.isArray(result) || result.length === 0 || !result[0]) throw new Error('MonaWallet: balance fetch failed')
     const info = result[0]
     const monapartyUtxos = info.uxtos ?? []
-    const utxos = monapartyUtxo2utxo(monapartyUtxos)
+    const utxos = monapartyUtxo2utxo(monapartyUtxos) // NOTE: monapartyから取得したUTXOにはmempoolが反映されない
     const confirmedSat = utxos.filter((u) => u.confirmations >= 1).reduce((sum, u) => sum + u.satoshi, 0)
     const unconfSat = utxos.filter((u) => u.confirmations < 1).reduce((sum, u) => sum + u.satoshi, 0)
     this.utxos = utxos
     this.balance = confirmedSat / 100_000_000
     this.unconfBalance = unconfSat / 100_000_000
+  }
+
+  async sendMona(toAddress: string, amount: number, feeRateSatPerVByte: number = 200): Promise<string> {
+    const amountSat = Math.floor(amount * SATOSHI)
+    if (amountSat <= 0) throw new Error('Amount must be greater than 0')
+    const availableUtxos = this.utxos.filter((u) => u.confirmations >= 1)
+    if (availableUtxos.length === 0) throw new Error('No confirmed UTXOs available')
+    // construct transaction
+    const tx = new btcSigner.Transaction()
+    let inputTotal = 0
+    const usedUtxos: Utxo[] = []
+    for (const utxo of availableUtxos) {
+      tx.addInput({
+        txid: utxo.txid,
+        index: utxo.vout,
+        witnessUtxo: {
+          script: btcSigner.p2wpkh(this.hdKey.publicKey!, MONA_NETWORK).script,
+          amount: BigInt(utxo.satoshi),
+        },
+      })
+      inputTotal += utxo.satoshi
+      usedUtxos.push(utxo)
+      if (inputTotal >= amountSat + SATOSHI / 1000) break // 手数料を考慮して多めに確保
+    }
+    tx.addOutputAddress(toAddress, BigInt(amountSat), MONA_NETWORK)
+    // fee and change calculation, P2WPKH input: ~68 vbytes, output: ~31 vbytes
+    const estimatedVSize = usedUtxos.length * 68 + 31 + 31 + 10 // inputs + output + change + overhead
+    const feeSat = Math.ceil(estimatedVSize * feeRateSatPerVByte)
+    const changeSat = inputTotal - amountSat - feeSat
+    if (changeSat < 0) throw new Error(`Insufficient balance. Need ${amountSat + feeSat} sat, have ${inputTotal} sat`)
+    if (changeSat > 546) tx.addOutputAddress(this.address, BigInt(changeSat), MONA_NETWORK) // ダストでなければお釣りを回収
+    // sign and broadcast
+    if (!this.hdKey.privateKey) throw new Error('Private key not available')
+    for (let i = 0; i < usedUtxos.length; i++) tx.signIdx(this.hdKey.privateKey, i)
+    tx.finalize()
+    const txHex = hex.encode(tx.extract())
+    const txid = await monaparty.broadcastTransaction(txHex)
+    return txid
   }
 }
 
