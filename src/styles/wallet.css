@@ -123,6 +123,11 @@ h3 {
   display: block;
 }
 
+.value-larger {
+  font-size: 1.2rem;
+  display: block;
+}
+
 .unconf-balance {
   color: #9ba3c0;
   font-size: 0.85rem;
@@ -322,6 +327,57 @@ h3 {
   font-size: 1rem;
   color: #9ba3c0;
   margin: 0;
+}
+
+/* Asset List */
+.asset-list {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.asset-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 1rem;
+  transition: all 0.2s ease;
+}
+
+.asset-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(161, 172, 255, 0.3);
+}
+
+.asset-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+}
+
+.asset-name {
+  font-weight: 600;
+  color: #a1acff;
+  font-size: 1rem;
+}
+
+.asset-quantity {
+  font-size: 1rem;
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.asset-longname {
+  margin-top: 0.5rem;
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.5);
+  word-break: break-all;
+}
+
+.subtitle-small {
+  font-size: 0.9rem;
+  margin-top: 0.5rem;
 }
 
 /* レスポンシブ */

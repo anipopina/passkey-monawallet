@@ -6,6 +6,7 @@ import * as btcSigner from '@scure/btc-signer'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 import { hex } from '@scure/base'
 import * as monaparty from './monaparty'
+import * as monapartyCached from './monaparty-cached'
 
 const SATOSHI = 100_000_000
 const DEFAULT_ADDRESS_PATH = "m/84'/22'/0'/0/0" // BIP84 Monacoin
@@ -17,14 +18,17 @@ const MONA_NETWORK = {
 } as const
 
 export class MonaWallet {
-  readonly entropy: Uint8Array // 256bit
-  readonly mnemonic: string // BIP39 24words
   readonly address: string // P2WPKH
   readonly derivationPath: string
-  private readonly hdKey: HDKey
+  readonly entropy: Uint8Array // 256bit
+  readonly mnemonic: string // BIP39 24words
+  readonly hdKey: HDKey
+  // mona
   balance = 0
   unconfBalance = 0
   utxos: Utxo[] = []
+  // monaparty
+  assetBalances: AssetBalance[] = []
 
   constructor(entropy: Uint8Array, derivationPath: string = DEFAULT_ADDRESS_PATH) {
     this.entropy = new Uint8Array(entropy)
@@ -33,12 +37,14 @@ export class MonaWallet {
     const seed = bip39.mnemonicToSeedSync(this.mnemonic)
     const root = HDKey.fromMasterSeed(seed)
     const child = root.derive(this.derivationPath)
-    if (!child.publicKey) throw new Error('Failed to derive public key')
+    if (!child.publicKey) throw new Error('MonaWallet: Failed to derive public key')
     this.hdKey = child
     const p2wpkh = btcSigner.p2wpkh(child.publicKey, MONA_NETWORK)
-    if (!p2wpkh.address) throw new Error('Failed to generate address')
+    if (!p2wpkh.address) throw new Error('MonaWallet: Failed to generate address')
     this.address = p2wpkh.address
   }
+
+  // #region MonacoinMethods
 
   async updateBalance(): Promise<void> {
     const result = await monaparty.getChainAddressInfo([this.address], {
@@ -54,7 +60,7 @@ export class MonaWallet {
     this.utxos = utxos
     this.balance = confirmedSat / 100_000_000
     this.unconfBalance = unconfSat / 100_000_000
-    // NOTE: monapartyから取得したUTXOにはmempoolが反映されない
+    // NOTE: getChainAddressInfoで取得したUTXOにはmempoolが反映されない
   }
 
   async sendMona(toAddress: string, amount: number, feeRateSatPerVByte: number = 200): Promise<string> {
@@ -87,13 +93,30 @@ export class MonaWallet {
     if (changeSat < 0) throw new Error(`Insufficient balance. Need ${amountSat + feeSat} sat, have ${inputTotal} sat`)
     if (changeSat > 546) tx.addOutputAddress(this.address, BigInt(changeSat), MONA_NETWORK) // ダストでなければお釣りを回収
     // sign and broadcast
-    if (!this.hdKey.privateKey) throw new Error('Private key not available')
+    if (!this.hdKey.privateKey) throw new Error('MonaWallet: Private key not available')
     for (let i = 0; i < usedUtxos.length; i++) tx.signIdx(this.hdKey.privateKey, i)
     tx.finalize()
     const txHex = hex.encode(tx.extract())
     const txid = await monaparty.broadcastTx(txHex)
     return txid
   }
+
+  // #endregion MonacoinMethods
+
+  // #region MonapartyMethods
+
+  async updateAssetBalances(): Promise<void> {
+    const balanceFilter: monaparty.GetTableParams = { filters: [{ field: 'address', op: '==', value: this.address }] }
+    const balances = await monaparty.getBalances(balanceFilter)
+    await monapartyCached.getAssetInfo(balances.map((bal) => bal.asset))
+    this.assetBalances = balances.map((bal) => {
+      const assetInfo = monapartyCached.assetInfoCache.get(bal.asset)
+      if (!assetInfo) throw new Error(`MonaWallet: Asset info not found for asset ${bal.asset}`)
+      return { ...bal, ...assetInfo }
+    })
+  }
+
+  // #endregion MonapartyMethods
 }
 
 function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
@@ -115,3 +138,5 @@ type Utxo = {
   amount: string // not number
   confirmations: number
 }
+
+type AssetBalance = monaparty.Balance & monaparty.AssetInfo

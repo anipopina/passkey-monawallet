@@ -45,9 +45,9 @@
       <div v-if="!isMonapartyMode" class="tab-content">
         <div class="field">
           <span class="label">Balance</span>
-          <span class="value monospace">
+          <span class="value-larger">
             <span v-if="!isBalanceLoading">
-              {{ wallet.balance.toFixed(8) }} MONA
+              <span class="monospace">{{ wallet.balance.toFixed(8) }}</span> MONA
               <span v-if="wallet.unconfBalance > 0" class="unconf-balance"> (+{{ wallet.unconfBalance.toFixed(8) }} unconfirmed) </span>
             </span>
             <span v-else class="loading-inline">
@@ -88,8 +88,41 @@
 
       <!-- Monaparty Tab -->
       <div v-else class="tab-content">
-        <div class="coming-soon">
-          <p>🚧 Monaparty features are coming soon!</p>
+        <div class="field">
+          <span class="label">Asset Balances</span>
+          <span class="value-larger">
+            <span v-if="!isAssetBalanceLoading && wallet.assetBalances.length > 0"> {{ wallet.assetBalances.length }} assets </span>
+            <span v-else-if="!isAssetBalanceLoading && wallet.assetBalances.length === 0"> No assets </span>
+            <span v-else class="loading-inline">
+              <span class="spinner"></span>
+              Loading...
+            </span>
+          </span>
+        </div>
+
+        <div class="field">
+          <button class="btn secondary" @click="refreshAssetBalance" :disabled="isAssetBalanceLoading">
+            {{ isAssetBalanceLoading ? 'Updating...' : 'Update Asset Balances' }}
+          </button>
+        </div>
+
+        <div v-if="wallet.assetBalances.length > 0" class="asset-list">
+          <div v-for="balance in wallet.assetBalances" :key="balance.asset" class="asset-item">
+            <div class="asset-header">
+              <span class="asset-name">{{ balance.asset }}</span>
+              <span class="asset-quantity monospace">
+                {{ formatAssetQuantity(balance.quantity, balance.divisible) }}
+              </span>
+            </div>
+            <div v-if="balance.asset_longname" class="asset-longname">
+              {{ balance.asset_longname }}
+            </div>
+          </div>
+        </div>
+
+        <div v-else-if="!isAssetBalanceLoading" class="coming-soon">
+          <p>📭 No Monaparty assets found</p>
+          <p class="subtitle-small">Assets you own will appear here</p>
         </div>
       </div>
     </section>
@@ -109,12 +142,14 @@ const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
 
 const isMnemonicOpen = ref(false)
 const isBalanceLoading = ref(false)
-const wallet = ref<MonaWallet | null>(null)
-const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
-const sendToAddress = ref('')
-const sendAmount = ref(0)
+const isAssetBalanceLoading = ref(false)
 const isSending = ref(false)
 const isMonapartyMode = ref(false)
+const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
+
+const wallet = ref<MonaWallet | null>(null)
+const sendToAddress = ref('')
+const sendAmount = ref(0)
 
 const signUp = async () => {
   try {
@@ -131,6 +166,7 @@ const signIn = async () => {
     const { prfOutput } = await hashWithPasskey(WEBAUTHN_RPID, WEBAUTHN_MESSAGETOHASH)
     wallet.value = new MonaWallet(prfOutput)
     await refreshBalance()
+    await refreshAssetBalance()
   } catch (error) {
     console.error('SignIn error:', error)
     alert(`Passkey でのサインインに失敗しました: ${error instanceof Error ? error.message : 'Unknown error'}`)
@@ -144,7 +180,7 @@ const sendMona = async () => {
   isSending.value = true
   try {
     const txid = await currentWallet.sendMona(sendToAddress.value, sendAmount.value)
-    alert(`送金成功！\nTXID: ${txid}`)
+    alert(`送金しました\n残高への反映には数分かかります\nTXID: ${txid}`)
     sendToAddress.value = ''
     sendAmount.value = 0
   } catch (error) {
@@ -169,7 +205,30 @@ const refreshBalance = async () => {
   }
 }
 
+const refreshAssetBalance = async () => {
+  const currentWallet = wallet.value
+  if (!currentWallet) return
+  isAssetBalanceLoading.value = true
+  try {
+    await currentWallet.updateAssetBalances()
+  } catch (error) {
+    console.error(error)
+    alert('トークン残高の更新に失敗しました')
+  } finally {
+    isAssetBalanceLoading.value = false
+  }
+}
+
 const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
+}
+
+const formatAssetQuantity = (quantity: number | bigint, divisible: boolean): string => {
+  let quantityStr = quantity.toString()
+  if (divisible) {
+    quantityStr = '000000000'.slice(quantityStr.length) + quantityStr
+    quantityStr = quantityStr.slice(0, -8) + '.' + quantityStr.slice(-8)
+  }
+  return quantityStr
 }
 </script>
