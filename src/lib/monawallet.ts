@@ -47,13 +47,14 @@ export class MonaWallet {
     })
     if (!Array.isArray(result) || result.length === 0 || !result[0]) throw new Error('MonaWallet: balance fetch failed')
     const info = result[0]
-    const monapartyUtxos = info.uxtos ?? []
-    const utxos = monapartyUtxo2utxo(monapartyUtxos) // NOTE: monapartyから取得したUTXOにはmempoolが反映されない
-    const confirmedSat = utxos.filter((u) => u.confirmations >= 1).reduce((sum, u) => sum + u.satoshi, 0)
-    const unconfSat = utxos.filter((u) => u.confirmations < 1).reduce((sum, u) => sum + u.satoshi, 0)
+    const responseUtxos = info.uxtos ?? []
+    const utxos = cbUtxosToUtxos(responseUtxos)
+    const confirmedSat = utxos.filter((u) => u.confirmations >= 1).reduce((sum, u) => sum + u.value, 0)
+    const unconfSat = utxos.filter((u) => u.confirmations < 1).reduce((sum, u) => sum + u.value, 0)
     this.utxos = utxos
     this.balance = confirmedSat / 100_000_000
     this.unconfBalance = unconfSat / 100_000_000
+    // NOTE: monapartyから取得したUTXOにはmempoolが反映されない
   }
 
   async sendMona(toAddress: string, amount: number, feeRateSatPerVByte: number = 200): Promise<string> {
@@ -71,10 +72,10 @@ export class MonaWallet {
         index: utxo.vout,
         witnessUtxo: {
           script: btcSigner.p2wpkh(this.hdKey.publicKey!, MONA_NETWORK).script,
-          amount: BigInt(utxo.satoshi),
+          amount: BigInt(utxo.value),
         },
       })
-      inputTotal += utxo.satoshi
+      inputTotal += utxo.value
       usedUtxos.push(utxo)
       if (inputTotal >= amountSat + SATOSHI / 1000) break // 手数料を考慮して多めに確保
     }
@@ -90,7 +91,7 @@ export class MonaWallet {
     for (let i = 0; i < usedUtxos.length; i++) tx.signIdx(this.hdKey.privateKey, i)
     tx.finalize()
     const txHex = hex.encode(tx.extract())
-    const txid = await monaparty.broadcastTransaction(txHex)
+    const txid = await monaparty.broadcastTx(txHex)
     return txid
   }
 }
@@ -98,17 +99,29 @@ export class MonaWallet {
 type Utxo = {
   txid: string
   vout: number
-  satoshi: number
+  value: number
+  amount: string // not number
   confirmations: number
 }
 
-function monapartyUtxo2utxo(utxos: monaparty.MonapartyUtxo[]): Utxo[] {
-  return utxos.map((utxo) => {
+function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
+  return mUtxos.map((cbUtxo) => {
     return {
-      txid: utxo.txid,
-      vout: utxo.vout,
-      satoshi: Math.round(Number(utxo.amount) * SATOSHI),
-      confirmations: utxo.confirmations,
+      txid: cbUtxo.txid,
+      vout: cbUtxo.vout,
+      value: Math.round(Number(cbUtxo.amount) * SATOSHI),
+      amount: cbUtxo.amount,
+      confirmations: cbUtxo.confirmations,
     }
   })
 }
+
+// function utxosToInputUtxos(utxos: Utxo[]): monaparty.InputUtxo[] {
+//   return utxos.map((utxo) => {
+//     return {
+//       txid: utxo.txid,
+//       vout: utxo.vout,
+//       amount: Number(utxo.amount),
+//     }
+//   })
+// }

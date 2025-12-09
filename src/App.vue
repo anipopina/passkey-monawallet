@@ -140,7 +140,7 @@ const signUp = async () => {
 
 const signIn = async () => {
   try {
-    const salt = await message2salt(WEBAUTHN_MESSAGETOHASH)
+    const salt = await messageToSalt(WEBAUTHN_MESSAGETOHASH)
     const pubkeyOptions: PublicKeyCredentialRequestOptions = {
       challenge: randomBytes(32), // ウォレットで認証するのでチャレンジは適当で良い
       rpId: WEBAUTHN_RPID,
@@ -157,7 +157,7 @@ const signIn = async () => {
     const credExtensions = webAuthnCredential.getClientExtensionResults()
     const prfResults = credExtensions.prf?.results
     if (!prfResults || !prfResults.first) throw new Error('PRF result not available (passkey or platform may not support it)')
-    const prfOutput = bufferSource2bytes(prfResults.first)
+    const prfOutput = bufferSourceToBytes(prfResults.first)
     wallet.value = new MonaWallet(prfOutput)
     await refreshBalance()
   } catch (error) {
@@ -202,7 +202,7 @@ const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
 }
 
-const message2salt = async (message: string) => {
+const messageToSalt = async (message: string) => {
   const data = new TextEncoder().encode(message)
   const digest = await crypto.subtle.digest('SHA-256', data)
   return new Uint8Array(digest)
@@ -214,7 +214,7 @@ const randomBytes = (len = 32) => {
   return buf
 }
 
-const bufferSource2bytes = (source: BufferSource): Uint8Array => {
+const bufferSourceToBytes = (source: BufferSource): Uint8Array => {
   if (source instanceof ArrayBuffer) return new Uint8Array(source)
   else return new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
 }
