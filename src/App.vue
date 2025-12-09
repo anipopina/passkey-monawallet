@@ -99,6 +99,7 @@
 <script setup lang="ts">
 import '@/styles/wallet.css'
 import { ref, computed } from 'vue'
+import { createPasskey, hashWithPasskey } from '@/lib/passkey'
 import { MonaWallet } from '@/lib/monawallet'
 
 const WEBAUTHN_RPID = location.hostname
@@ -117,20 +118,7 @@ const isMonapartyMode = ref(false)
 
 const signUp = async () => {
   try {
-    const pubkeyOptions: PublicKeyCredentialCreationOptions = {
-      challenge: randomBytes(32),
-      rp: { id: WEBAUTHN_RPID, name: WEBAUTHN_RPNAME },
-      user: { id: randomBytes(32), name: WEBAUTHN_USERNAME, displayName: WEBAUTHN_USERNAME },
-      pubKeyCredParams: [{ type: 'public-key', alg: -7 }],
-      authenticatorSelection: { residentKey: 'preferred', userVerification: 'required' },
-      attestation: 'none',
-      extensions: { prf: {} },
-    }
-    const webAuthnCredential = await navigator.credentials.create({ publicKey: pubkeyOptions })
-    if (!webAuthnCredential) throw new Error('Passkey Registration Failed')
-    if (!(webAuthnCredential instanceof PublicKeyCredential)) throw new Error(`Unexpected credential type: ${webAuthnCredential.type}`)
-    const credExtensions = webAuthnCredential.getClientExtensionResults()
-    if (!credExtensions.prf?.enabled) throw new Error('WebAuthn PRF extension not enabled')
+    await createPasskey(WEBAUTHN_RPID, WEBAUTHN_RPNAME, WEBAUTHN_USERNAME)
     alert('Passkey の登録に成功しました！')
   } catch (error) {
     console.error('SignUp error:', error)
@@ -140,24 +128,7 @@ const signUp = async () => {
 
 const signIn = async () => {
   try {
-    const salt = await messageToSalt(WEBAUTHN_MESSAGETOHASH)
-    const pubkeyOptions: PublicKeyCredentialRequestOptions = {
-      challenge: randomBytes(32), // ウォレットで認証するのでチャレンジは適当で良い
-      rpId: WEBAUTHN_RPID,
-      userVerification: 'required',
-      extensions: {
-        prf: {
-          eval: { first: salt.buffer },
-        },
-      },
-    }
-    const webAuthnCredential = await navigator.credentials.get({ publicKey: pubkeyOptions })
-    if (!webAuthnCredential) throw new Error('Passkey Sign Failed')
-    if (!(webAuthnCredential instanceof PublicKeyCredential)) throw new Error(`Unexpected credential type: ${webAuthnCredential.type}`)
-    const credExtensions = webAuthnCredential.getClientExtensionResults()
-    const prfResults = credExtensions.prf?.results
-    if (!prfResults || !prfResults.first) throw new Error('PRF result not available (passkey or platform may not support it)')
-    const prfOutput = bufferSourceToBytes(prfResults.first)
+    const { prfOutput } = await hashWithPasskey(WEBAUTHN_RPID, WEBAUTHN_MESSAGETOHASH)
     wallet.value = new MonaWallet(prfOutput)
     await refreshBalance()
   } catch (error) {
@@ -200,22 +171,5 @@ const refreshBalance = async () => {
 
 const toggleMnemonic = () => {
   isMnemonicOpen.value = !isMnemonicOpen.value
-}
-
-const messageToSalt = async (message: string) => {
-  const data = new TextEncoder().encode(message)
-  const digest = await crypto.subtle.digest('SHA-256', data)
-  return new Uint8Array(digest)
-}
-
-const randomBytes = (len = 32) => {
-  const buf = new Uint8Array(len)
-  crypto.getRandomValues(buf)
-  return buf
-}
-
-const bufferSourceToBytes = (source: BufferSource): Uint8Array => {
-  if (source instanceof ArrayBuffer) return new Uint8Array(source)
-  else return new Uint8Array(source.buffer, source.byteOffset, source.byteLength)
 }
 </script>

@@ -96,14 +96,6 @@ export class MonaWallet {
   }
 }
 
-type Utxo = {
-  txid: string
-  vout: number
-  value: number
-  amount: string // not number
-  confirmations: number
-}
-
 function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
   return mUtxos.map((cbUtxo) => {
     return {
@@ -116,12 +108,10 @@ function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
   })
 }
 
-// function utxosToInputUtxos(utxos: Utxo[]): monaparty.InputUtxo[] {
-//   return utxos.map((utxo) => {
-//     return {
-//       txid: utxo.txid,
-//       vout: utxo.vout,
-//       amount: Number(utxo.amount),
-//     }
-//   })
-// }
+type Utxo = {
+  txid: string
+  vout: number
+  value: number
+  amount: string // not number
+  confirmations: number
+}
