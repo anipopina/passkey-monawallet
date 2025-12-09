@@ -3,6 +3,9 @@
 const MONAPARTY_ENDPOINT = 'https://monapa.electrum-mona.org/_api'
 //const MONAPARTY_ENDPOINT = 'https://wallet.monaparty.me/_api'
 
+import jsonBigint from 'json-bigint'
+const JSONbig = jsonBigint({ useNativeBigInt: true })
+
 // #region CounterpartyAPI
 /*
 参考:
@@ -99,7 +102,7 @@ export async function getBalances(params: GetTableParams): Promise<Balance[]> {
 }
 export type Balance = {
   asset: string
-  quantity: number
+  quantity: number | bigint
   address: string
 }
 
@@ -123,7 +126,7 @@ export type Issuance = {
   status: string
   reassignable: number
   issuer: string
-  quantity: number
+  quantity: number | bigint
   msg_index: number
   call_price: number
   block_index: number
@@ -135,16 +138,16 @@ export async function getDispensers(params: GetTableParams): Promise<Dispenser[]
   return await counterpartyRpc<Dispenser[]>('get_dispensers', camelKeysToSnakeKeys(params))
 }
 export type Dispenser = {
-  give_remaining: number
+  give_remaining: number | bigint
   asset: string
   tx_index: number
-  give_quantity: number
+  give_quantity: number | bigint
   status: number
-  satoshirate: number
+  satoshirate: number | bigint
   block_index: number
   source: string
   tx_hash: string
-  escrow_quantity: number
+  escrow_quantity: number | bigint
 }
 
 export async function getBroadcasts(params: GetTableParams): Promise<Broadcast[]> {
@@ -168,7 +171,7 @@ export async function getCredits(params: GetTableParams): Promise<Credit[]> {
 }
 export type Credit = {
   asset: string
-  quantity: number
+  quantity: number | bigint
   event: string
   address: string
   block_index: number
@@ -180,7 +183,7 @@ export async function getDebits(params: GetTableParams): Promise<Debit[]> {
 }
 export type Debit = {
   asset: string
-  quantity: number
+  quantity: number | bigint
   event: string
   action: string
   block_index: number
@@ -224,7 +227,7 @@ export type CreateSendParams = {
   source: string
   destination: string
   asset: string
-  quantity: number
+  quantity: number | bigint
   memo?: string
   memoIsHex?: boolean
   useEnhancedSend?: boolean
@@ -233,7 +236,7 @@ export type CreateSendParams = {
 export type CreateIssuanceParams = {
   source: string
   asset: string
-  quantity: number
+  quantity: number | bigint
   divisible: boolean
   description?: string
   transferDestination?: string
@@ -246,7 +249,7 @@ export type CreateIssuanceParams = {
 
 export type CreateDividendParams = {
   source: string
-  quantityPerUnit: number
+  quantityPerUnit: number | bigint
   asset: string
   dividendAsset: string
 } & CreateTxCommonParams
@@ -254,9 +257,9 @@ export type CreateDividendParams = {
 export type CreateDispenserParams = {
   source: string
   asset: string
-  giveQuantity: number // close時は0でOK
-  escrowQuantity: number // close時は0でOK
-  mainchainrate: number // giveQuantityあたりの価格 (satoshi), close時は0でOK
+  giveQuantity: number | bigint // close時は0でOK
+  escrowQuantity: number | bigint // close時は0でOK
+  mainchainrate: number | bigint // giveQuantityあたりの価格 (satoshi), close時は0でOK
   status: DispenserStatus
   openAddress?: string
   oracleAddress?: string
@@ -283,9 +286,9 @@ export enum SweepFlags {
 export type CreateOrderParams = {
   source: string
   giveAsset: string
-  giveQuantity: number
+  giveQuantity: number | bigint
   getAsset: string
-  getQuantity: number
+  getQuantity: number | bigint
   expiration: number // blocks, 1-65535 (~136 days), 1=即約定しなければキャンセル
   feeRequired: number // 0など
   feeProvided: number // ドキュメントにないけど必須, 0など
@@ -307,7 +310,7 @@ export type CreateBroadcastParams = {
 export type CreateDestroyParams = {
   source: string
   asset: string
-  quantity: number
+  quantity: number | bigint
   tag?: string
 } & CreateTxCommonParams
 
@@ -318,7 +321,7 @@ export type CreateBtcpayParams = {
 
 export type CreateBurnParams = {
   source: string
-  quantity: number
+  quantity: number | bigint
 } & CreateTxCommonParams
 
 export type CreateBetParams = {
@@ -326,8 +329,8 @@ export type CreateBetParams = {
   feedAddress: string
   betType: number
   deadline: number
-  wagerQuantity: number
-  counterwagerQuantity: number
+  wagerQuantity: number | bigint
+  counterwagerQuantity: number | bigint
   expiration: number
   targetValue?: number
   leverage?: number
@@ -471,7 +474,7 @@ export async function geHolders(asset: string): Promise<AssetInfo[]> {
 }
 export type Holder = {
   address: string
-  address_quantity: number
+  address_quantity: number | bigint
   escrow: number | null
 }
 
@@ -573,11 +576,11 @@ export async function counterblockRpc<T = JsonValue>(method: string, params: Jso
       'Content-Type': 'application/json',
       Accept: 'application/json',
     },
-    body: JSON.stringify(body),
+    body: JSONbig.stringify(body),
   })
   if (!res.ok) throw new Error(`Monaparty API error: HTTP ${res.status}`)
   const json = await res.json()
-  if (json.error) throw new Error(`Monaparty RPC error: ${JSON.stringify(json.error)}`)
+  if (json.error) throw new Error(`Monaparty RPC error: ${JSONbig.stringify(json.error)}`)
   return json.result as T
 }
 
@@ -590,7 +593,7 @@ export async function counterpartyRpc<T = JsonValue>(method: string, params: Jso
 
 // #region Utilities
 
-type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
+type JsonValue = string | number | bigint | boolean | null | JsonValue[] | { [key: string]: JsonValue } // bigint拡張
 
 function camelToSnake(str: string): string {
   return str.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()
