@@ -2,8 +2,8 @@
 
 Monapartyのbroadcastを使った簡単なDAppのサンプルです
 
-このサンプルでは単テキストをbase64URLエンコードしてbroadcastに保存しているだけですが
-CBORなども組み合わせればfeeを抑えつつ複雑なデータ構造も扱えると思います
+このサンプルではテキストをそのままbroadcastに保存していますが
+JSON -> CBOR -> Base64 などで書き込めばfeeを抑えつつ複雑なデータ構造も扱えると思います
 
 アプリのデータを絞り込むためにbroadcastのvalueフィールドを使っています
 
@@ -43,7 +43,7 @@ CBORなども組み合わせればfeeを抑えつつ複雑なデータ構造も�
           <span class="message-address">{{ shortenAddress(msg.source) }}</span>
           <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
         </div>
-        <div class="message-text">{{ msg.decodedText }}</div>
+        <div class="message-text">{{ msg.data }}</div>
         <div class="message-footer">
           <a :href="`https://mpchain.info/tx/${msg.tx_hash}`" target="_blank" class="message-link"> View TX </a>
         </div>
@@ -62,7 +62,7 @@ import { ref, onMounted } from 'vue'
 import type { MonaWallet } from '@/lib/monawallet'
 import * as monaparty from '@/lib/monaparty'
 
-const BROADCAST_VALUE = 2512.11
+const BROADCAST_VALUE = 25.1211
 
 const props = defineProps<{ wallet: MonaWallet | null }>()
 const isPosting = ref(false)
@@ -75,8 +75,7 @@ const postMessage = async () => {
   if (!confirm(`メッセージを投稿しますか？\n\n"${message.value}"`)) return
   isPosting.value = true
   try {
-    const encodedMessage = encode(message.value.trim())
-    const txId = await props.wallet.postBroadcast(encodedMessage, BROADCAST_VALUE)
+    const txId = await props.wallet.postBroadcast(message.value.trim(), BROADCAST_VALUE)
     alert(`メッセージを投稿しました\n反映には数分かかります\nTXID: ${txId}`)
     message.value = ''
   } catch (error) {
@@ -98,41 +97,15 @@ const loadMessages = async () => {
     })
     messages.value = broadcasts
       .map((bro) => ({
-        decodedText: decode(bro.text),
+        data: bro.text, // JSONを扱う場合はここでデコード/パースする
         ...bro,
       }))
-      .filter((bro) => bro.decodedText)
+      .filter((bro) => bro.data)
   } catch (error) {
     console.error('Load messages error:', error)
     alert('メッセージの読み込みに失敗しました')
   } finally {
     isLoading.value = false
-  }
-}
-
-const encode = (text: string): string => {
-  // 文字列をbase64URLエンコードする
-  const bytes = new TextEncoder().encode(text)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!)
-  const base64 = btoa(binary)
-  const base64url = base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-  return base64url
-}
-
-const decode = (base64url: string): string | null => {
-  // base64URLをデコードして文字列に戻す
-  if (!base64url || base64url.trim() === '') return null
-  try {
-    const base64nopad = base64url.replace(/-/g, '+').replace(/_/g, '/')
-    const base64 = base64nopad + '='.repeat((4 - (base64nopad.length % 4)) % 4)
-    const binary = atob(base64)
-    const bytes = new Uint8Array(binary.length)
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
-    const text = new TextDecoder().decode(bytes)
-    return text
-  } catch {
-    return null
   }
 }
 
@@ -157,6 +130,6 @@ onMounted(() => {
 })
 
 type Message = {
-  decodedText: string | null
+  data: string
 } & monaparty.Broadcast
 </script>
