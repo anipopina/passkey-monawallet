@@ -37,12 +37,13 @@
       </div>
 
       <div class="tabs">
-        <button class="tab-btn" :class="{ active: !isMonapartyMode }" @click="isMonapartyMode = false">Monacoin</button>
-        <button class="tab-btn" :class="{ active: isMonapartyMode }" @click="isMonapartyMode = true">Monaparty</button>
+        <button class="tab-btn" :class="{ active: activeTab === 'monacoin' }" @click="activeTab = 'monacoin'">Monacoin</button>
+        <button class="tab-btn" :class="{ active: activeTab === 'monaparty' }" @click="activeTab = 'monaparty'">Monaparty</button>
+        <button class="tab-btn" :class="{ active: activeTab === 'messageboard' }" @click="activeTab = 'messageboard'">Message Board</button>
       </div>
 
       <!-- Monacoin Tab -->
-      <div v-if="!isMonapartyMode" class="tab-content">
+      <div v-if="activeTab === 'monacoin'" class="tab-content">
         <div class="field">
           <span class="label">Balance</span>
           <span class="value-larger">
@@ -87,7 +88,7 @@
       </div>
 
       <!-- Monaparty Tab -->
-      <div v-else class="tab-content">
+      <div v-else-if="activeTab === 'monaparty'" class="tab-content">
         <div class="field">
           <span class="label">Asset Balances</span>
           <span class="value-larger">
@@ -166,6 +167,11 @@
           <p class="subtitle-small">Assets you own will appear here</p>
         </div>
       </div>
+
+      <!-- MessageBoard Tab -->
+      <div v-else-if="activeTab === 'messageboard'" class="tab-content">
+        <MessageBoard :wallet="wallet" />
+      </div>
     </section>
   </div>
 </template>
@@ -175,24 +181,25 @@ import '@/styles/wallet.css'
 import { ref, computed } from 'vue'
 import { createPasskey, hashWithPasskey } from '@/lib/passkey'
 import { MonaWallet, type AssetBalance } from '@/lib/monawallet'
+import MessageBoard from '@/components/MessageBoard.vue'
 
 const WEBAUTHN_RPID = location.hostname
 const WEBAUTHN_RPNAME = 'Passkey Monacoin Wallet'
 const WEBAUTHN_USERNAME = 'Passkey MONA User'
 const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
 
+const activeTab = ref<'monacoin' | 'monaparty' | 'messageboard'>('monacoin')
 const isMnemonicOpen = ref(false)
 const isBalanceLoading = ref(false)
 const isAssetBalanceLoading = ref(false)
 const isSending = ref(false)
 const isSendingAsset = ref(false)
-const isMonapartyMode = ref(false)
+const selectedAssetToSend = ref<string | null>(null)
 const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
 
 const wallet = ref<MonaWallet | null>(null)
 const sendToAddress = ref('')
 const sendAmount = ref(0)
-const selectedAssetToSend = ref<string | null>(null)
 const assetSendToAddress = ref('')
 const assetSendAmount = ref('')
 

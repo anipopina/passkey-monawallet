@@ -22,7 +22,7 @@ export class MonaWallet {
   readonly derivationPath: string
   readonly entropy: Uint8Array // 256bit
   readonly mnemonic: string // BIP39 24words
-  readonly hdKey: HDKey
+  readonly hdKey: unknown // HACK: HDKeyの型定義の問題でエラーが出るためanyにしてアサーションしながら使う
   // mona
   balance = 0
   unconfBalance = 0
@@ -64,6 +64,7 @@ export class MonaWallet {
   }
 
   async sendMona(toAddress: string, amount: number, feeSatPerVByte: number = 200): Promise<string> {
+    const hdKey = this.hdKey as HDKey
     const amountSat = Math.floor(amount * SATOSHI)
     if (amountSat <= 0) throw new Error('Amount must be greater than 0')
     const availableUtxos = this.utxos.filter((u) => u.confirmations >= 1)
@@ -77,7 +78,7 @@ export class MonaWallet {
         txid: utxo.txid,
         index: utxo.vout,
         witnessUtxo: {
-          script: btcSigner.p2wpkh(this.hdKey.publicKey!, MONA_NETWORK).script,
+          script: btcSigner.p2wpkh(hdKey.publicKey!, MONA_NETWORK).script,
           amount: BigInt(utxo.value),
         },
       })
@@ -118,16 +119,7 @@ export class MonaWallet {
   async sendAsset(toAddress: string, asset: string, amount: number | string, feeSatPerByte: number = 200): Promise<string> {
     const balance = this.assetBalances.find((bal) => bal.asset === asset)
     if (!balance) throw new Error(`MonaWallet: No balance for asset ${asset}`)
-    const amountStr = amount.toString()
-    let quantity: bigint
-    if (balance.divisible) {
-      const parts = amountStr.split('.')
-      const integerPart = parts[0] || '0'
-      const decimalPart = (parts[1] || '').padEnd(8, '0').slice(0, 8)
-      quantity = BigInt(integerPart + decimalPart)
-    } else {
-      quantity = BigInt(amountStr)
-    }
+    const quantity = amountToQuantity(amount, balance.divisible)
     const txHex = await monaparty.createSend({
       source: this.address,
       destination: toAddress,
@@ -140,9 +132,23 @@ export class MonaWallet {
     return txId
   }
 
+  async postBroadcast(text: string, value: number = -1, feeSatPerByte: number = 250): Promise<string> {
+    const txHex = await monaparty.createBroadcast({
+      source: this.address,
+      text: text,
+      value: value,
+      timestamp: Math.floor(Date.now() / 1000),
+      feeFraction: 0,
+      feePerKb: feeSatPerByte * 1000,
+    })
+    const txId = await this.signAndBroadcastMonapartyTxHex(txHex)
+    return txId
+  }
+
   async signAndBroadcastTx(tx: btcSigner.Transaction): Promise<string> {
-    if (!this.hdKey.privateKey) throw new Error('MonaWallet: Private key not available')
-    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(this.hdKey.privateKey, i)
+    const hdKey = this.hdKey as HDKey
+    if (!hdKey.privateKey) throw new Error('MonaWallet: Private key not available')
+    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(hdKey.privateKey, i)
     tx.finalize()
     const signedTxHex = hex.encode(tx.extract())
     const txId = await monaparty.broadcastTx(signedTxHex)
@@ -152,11 +158,19 @@ export class MonaWallet {
   async signAndBroadcastMonapartyTxHex(txHex: string): Promise<string> {
     // createXXXで生成されたtxHexは形式が古いのでPSBTとして再構築する
     await this.updateBalance() // 最新のUTXO情報が必要
+    const hdKey = this.hdKey as HDKey
     const txBytes = hex.decode(txHex)
-    const mpTx = btcSigner.Transaction.fromRaw(txBytes, { allowUnknownOutputs: true })
-    const newTx = new btcSigner.Transaction({ allowUnknownOutputs: true })
-    if (!this.hdKey.publicKey) throw new Error('MonaWallet: Public key not available')
-    const p2wpkhScript = btcSigner.p2wpkh(this.hdKey.publicKey, MONA_NETWORK).script
+    const mpTx = btcSigner.Transaction.fromRaw(txBytes, {
+      allowUnknownInputs: true,
+      allowUnknownOutputs: true,
+      disableScriptCheck: true,
+    })
+    const newTx = new btcSigner.Transaction({
+      allowUnknownOutputs: true,
+      disableScriptCheck: true,
+    })
+    if (!hdKey.publicKey) throw new Error('MonaWallet: Public key not available')
+    const p2wpkhScript = btcSigner.p2wpkh(hdKey.publicKey, MONA_NETWORK).script
     // inputsをコピー（witnessUtxoを追加）
     for (let i = 0; i < mpTx.inputsLength; i++) {
       const input = mpTx.getInput(i)
@@ -235,6 +249,20 @@ function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
       confirmations: cbUtxo.confirmations,
     }
   })
+}
+
+function amountToQuantity(amount: number | string, divisible: boolean): bigint {
+  const amountStr = amount.toString()
+  let quantity: bigint
+  if (divisible) {
+    const parts = amountStr.split('.')
+    const integerPart = parts[0] || '0'
+    const decimalPart = (parts[1] || '').padEnd(8, '0').slice(0, 8)
+    quantity = BigInt(integerPart + decimalPart)
+  } else {
+    quantity = BigInt(amountStr)
+  }
+  return quantity
 }
 
 function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
