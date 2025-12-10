@@ -230,7 +230,7 @@ export type CreateSendParams = {
   quantity: number | bigint
   memo?: string
   memoIsHex?: boolean
-  useEnhancedSend?: boolean
+  useEnhancedSend?: boolean // デフォルトで true
 } & CreateTxCommonParams
 
 export type CreateIssuanceParams = {

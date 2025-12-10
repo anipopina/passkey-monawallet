@@ -109,19 +109,60 @@
         <div v-if="wallet.assetBalances.length > 0" class="asset-list">
           <div v-for="balance in wallet.assetBalances" :key="balance.asset" class="asset-item">
             <div class="asset-header">
-              <span class="asset-name">{{ balance.asset }}</span>
+              <span class="asset-name">{{ balance.assetMainName }}</span>
               <span class="asset-quantity monospace">
                 {{ formatAssetQuantity(balance.quantity, balance.divisible) }}
               </span>
             </div>
-            <div v-if="balance.asset_longname" class="asset-longname">
-              {{ balance.asset_longname }}
+            <div v-if="balance.assetSubName" class="asset-longname">
+              {{ balance.assetSubName }}
+            </div>
+
+            <button v-if="selectedAssetToSend !== balance.asset" class="btn-small secondary send-btn" @click="startSendAsset(balance)">
+              Send {{ balance.assetMainName }}
+            </button>
+
+            <!-- アセット送信フォーム（選択時のみ表示） -->
+            <div v-else class="send-form">
+              <div class="field-small">
+                <label class="label-small">To Address</label>
+                <input v-model="assetSendToAddress" type="text" class="input-small" placeholder="Monacoin Address" />
+              </div>
+
+              <div class="field-small">
+                <label class="label-small">Amount</label>
+                <div class="amount-input-group">
+                  <input
+                    v-model="assetSendAmount"
+                    type="text"
+                    class="input-small"
+                    :placeholder="balance.divisible ? '0.0' : '0'"
+                    @input="validateAssetAmount($event, balance.divisible)"
+                  />
+                  <button class="btn-max" @click="setMaxAmount(balance)">MAX</button>
+                </div>
+              </div>
+
+              <div class="button-group-small">
+                <button class="btn-small secondary" @click="cancelSendAsset">Cancel</button>
+                <button
+                  class="btn-small primary"
+                  @click="sendAsset(balance)"
+                  :disabled="isSendingAsset || !assetSendToAddress || !assetSendAmount"
+                >
+                  <span v-if="!isSendingAsset">Send</span>
+                  <span v-else class="loading-inline">
+                    <span class="spinner-small"></span>
+                    Sending...
+                  </span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
 
         <div v-else-if="!isAssetBalanceLoading" class="coming-soon">
-          <p>📭 No Monaparty assets found</p>
+          <p>No Monaparty assets found</p>
           <p class="subtitle-small">Assets you own will appear here</p>
         </div>
       </div>
@@ -133,7 +174,7 @@
 import '@/styles/wallet.css'
 import { ref, computed } from 'vue'
 import { createPasskey, hashWithPasskey } from '@/lib/passkey'
-import { MonaWallet } from '@/lib/monawallet'
+import { MonaWallet, type AssetBalance } from '@/lib/monawallet'
 
 const WEBAUTHN_RPID = location.hostname
 const WEBAUTHN_RPNAME = 'Passkey Monacoin Wallet'
@@ -144,12 +185,16 @@ const isMnemonicOpen = ref(false)
 const isBalanceLoading = ref(false)
 const isAssetBalanceLoading = ref(false)
 const isSending = ref(false)
+const isSendingAsset = ref(false)
 const isMonapartyMode = ref(false)
 const mnemonicWords = computed(() => (wallet.value ? wallet.value.mnemonic.trim().split(/\s+/) : []))
 
 const wallet = ref<MonaWallet | null>(null)
 const sendToAddress = ref('')
 const sendAmount = ref(0)
+const selectedAssetToSend = ref<string | null>(null)
+const assetSendToAddress = ref('')
+const assetSendAmount = ref('')
 
 const signUp = async () => {
   try {
@@ -179,8 +224,8 @@ const sendMona = async () => {
   if (!confirm(`${sendAmount.value} MONA を ${sendToAddress.value} に送りますか？`)) return
   isSending.value = true
   try {
-    const txid = await currentWallet.sendMona(sendToAddress.value, sendAmount.value)
-    alert(`送金しました\n残高への反映には数分かかります\nTXID: ${txid}`)
+    const txId = await currentWallet.sendMona(sendToAddress.value, sendAmount.value)
+    alert(`送金しました\n残高への反映には数分かかります\nTXID: ${txId}`)
     sendToAddress.value = ''
     sendAmount.value = 0
   } catch (error) {
@@ -188,6 +233,39 @@ const sendMona = async () => {
     alert(`送金失敗: ${error instanceof Error ? error.message : 'Unknown error'}`)
   } finally {
     isSending.value = false
+  }
+}
+
+const startSendAsset = (balance: AssetBalance) => {
+  selectedAssetToSend.value = balance.asset
+  assetSendToAddress.value = ''
+  assetSendAmount.value = ''
+}
+
+const cancelSendAsset = () => {
+  selectedAssetToSend.value = null
+  assetSendToAddress.value = ''
+  assetSendAmount.value = ''
+}
+
+const setMaxAmount = (balance: AssetBalance) => {
+  assetSendAmount.value = formatAssetQuantity(balance.quantity, balance.divisible)
+}
+
+const sendAsset = async (balance: AssetBalance) => {
+  const currentWallet = wallet.value
+  if (!currentWallet) return
+  if (!confirm(`${assetSendAmount.value} ${balance.assetMainName} を ${assetSendToAddress.value} に送りますか？`)) return
+  isSendingAsset.value = true
+  try {
+    const txid = await currentWallet.sendAsset(assetSendToAddress.value, balance.asset, assetSendAmount.value)
+    alert(`${balance.assetMainName} を送りました\n残高への反映には数分かかります\nTXID: ${txid}`)
+    cancelSendAsset()
+  } catch (error) {
+    console.error('Send asset error:', error)
+    alert(`送信失敗: ${error instanceof Error ? error.message : 'Unknown error'}`)
+  } finally {
+    isSendingAsset.value = false
   }
 }
 
@@ -217,6 +295,27 @@ const refreshAssetBalance = async () => {
   } finally {
     isAssetBalanceLoading.value = false
   }
+}
+
+const validateAssetAmount = (event: Event, divisible: boolean) => {
+  const input = event.target as HTMLInputElement
+  let value = input.value
+  if (divisible) {
+    value = value.replace(/[^\d.]/g, '') // 数字と小数点のみ
+    const parts = value.split('.')
+    // 小数点が複数ある場合は最初の1つだけ残す
+    if (parts.length > 2) {
+      value = parts[0] + '.' + parts.slice(1).join('')
+    }
+    // 小数点以下8桁まで
+    if (parts.length === 2 && parts[1] && parts[1].length > 8) {
+      value = parts[0] + '.' + parts[1].slice(0, 8)
+    }
+  } else {
+    value = value.replace(/[^\d]/g, '') // 数字のみ
+  }
+  assetSendAmount.value = value
+  input.value = value
 }
 
 const toggleMnemonic = () => {
