@@ -8,6 +8,7 @@ import { hex } from '@scure/base'
 import * as monaparty from './monaparty'
 import * as monapartyCached from './monaparty-cached'
 
+const ESPLORA_ENDPOINT = 'https://esplora.electrum-mona.org/api/'
 const INSIGHT_ENDPOINT = 'https://mona.insight.monaco-ex.org/insight-api-monacoin/'
 
 const SATOSHI = 100_000_000
@@ -68,8 +69,8 @@ export class MonaWallet {
 
   async updateBalance(): Promise<void> {
     const utxos = await this.getUtxos()
-    const confirmedSat = utxos.filter((u) => u.confirmations >= 1).reduce((sum, u) => sum + u.value, 0)
-    const unconfSat = utxos.filter((u) => u.confirmations < 1).reduce((sum, u) => sum + u.value, 0)
+    const confirmedSat = utxos.filter((u) => u.confirmed).reduce((sum, u) => sum + u.value, 0)
+    const unconfSat = utxos.filter((u) => !u.confirmed).reduce((sum, u) => sum + u.value, 0)
     this.utxos = utxos
     this.balance = confirmedSat / 100_000_000
     this.unconfBalance = unconfSat / 100_000_000
@@ -78,7 +79,7 @@ export class MonaWallet {
   async sendMona(toAddress: string, amount: number, feeSatPerVByte: number = 200): Promise<string> {
     const amountSat = Math.floor(amount * SATOSHI)
     if (amountSat <= 0) throw new Error('Amount must be greater than 0')
-    const availableUtxos = this.utxos.filter((u) => u.confirmations >= 1)
+    const availableUtxos = this.utxos.filter((u) => u.confirmed)
     if (availableUtxos.length === 0) throw new Error('No confirmed UTXOs available')
     // construct transaction
     const tx = new btcSigner.Transaction({ allowLegacyWitnessUtxo: true })
@@ -111,9 +112,15 @@ export class MonaWallet {
   }
 
   async getUtxos(): Promise<Utxo[]> {
+    try {
+      this.isUnconfUtxoAvailable = true
+      return await getEsploraUtxo(this.address)
+    } catch (error) {
+      console.warn('Esplora API failed, falling back to Counterblock UTXO fetch:', error)
+    }
     if (this.addressType === 'P2PKH') {
       try {
-        this.isUnconfUtxoAvailable = true // Insight APIはmempoolを反映する
+        this.isUnconfUtxoAvailable = true
         return await getInsightUtxos(this.address)
       } catch (error) {
         console.warn('Insight API failed, falling back to Counterblock UTXO fetch:', error)
@@ -242,7 +249,7 @@ function inspectMonapartyTxHex(txHex: string, sourceAddress: string): void {
     throw new Error(`Transaction sends too much MONA from your address.\nActual outflow: ${Number(actualOutflowSat) / SATOSHI} MONA`)
 }
 
-export async function getInsightUtxos(address: string): Promise<Utxo[]> {
+async function getInsightUtxos(address: string): Promise<Utxo[]> {
   const url = `${INSIGHT_ENDPOINT}addrs/${address}/utxo`
   const res = await fetch(url)
   if (!res.ok) throw new Error(`Insight API error: HTTP ${res.status}`)
@@ -252,14 +259,29 @@ export async function getInsightUtxos(address: string): Promise<Utxo[]> {
       txid: u.txid,
       vout: u.vout,
       value: u.satoshis,
-      amount: u.amount.toString(),
-      confirmations: u.confirmations,
+      confirmed: u.confirmations > 0,
     }
   })
   return utxos
 }
 
-export async function getCounterblockUtxos(address: string): Promise<Utxo[]> {
+async function getEsploraUtxo(address: string): Promise<Utxo[]> {
+  const url = `${ESPLORA_ENDPOINT}address/${address}/utxo`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Esplora API error: HTTP ${res.status}`)
+  const esUtxos: EsploraUtxo[] = await res.json()
+  const utxos = esUtxos.map((u) => {
+    return {
+      txid: u.txid,
+      vout: u.vout,
+      value: u.value,
+      confirmed: u.status.confirmed,
+    }
+  })
+  return utxos
+}
+
+async function getCounterblockUtxos(address: string): Promise<Utxo[]> {
   const result = await monaparty.getChainAddressInfo([address], { withUtxos: true, withLastTxnHashes: false })
   if (!result[0]) throw new Error('MonaWallet: balance fetch failed')
   const info = result[0]
@@ -269,8 +291,7 @@ export async function getCounterblockUtxos(address: string): Promise<Utxo[]> {
       txid: u.txid,
       vout: u.vout,
       value: Math.round(Number(u.amount) * SATOSHI),
-      amount: u.amount,
-      confirmations: u.confirmations,
+      confirmed: u.confirmations > 0,
     }
   })
   return utxos
@@ -317,8 +338,7 @@ type Utxo = {
   txid: string
   vout: number
   value: number
-  amount: string // not number
-  confirmations: number
+  confirmed: boolean
 }
 
 export type AssetBalance = {
@@ -336,4 +356,16 @@ export type InsightUtxo = {
   satoshis: number
   height: number
   confirmations: number
+}
+
+export type EsploraUtxo = {
+  txid: string
+  vout: number
+  value: number
+  status: {
+    confirmed: boolean
+    block_height?: number
+    block_hash?: string
+    block_time?: number
+  }
 }

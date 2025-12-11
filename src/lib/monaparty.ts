@@ -6,6 +6,7 @@ const JSONbig = jsonBigint({ useNativeBigInt: true })
 const MONAPARTY_ENDPOINTS = ['https://monapa.electrum-mona.org/_api', 'https://wallet.monaparty.me/_api']
 let bestEndpoint: string = ''
 
+// 最初にこれを呼んでおくと調子の良いサーバーを使ってくれます
 export async function checkBestServer(): Promise<string> {
   const promises = []
   for (const endpoint of MONAPARTY_ENDPOINTS) {
