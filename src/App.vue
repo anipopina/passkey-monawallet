@@ -191,9 +191,10 @@
 
 <script setup lang="ts">
 import '@/styles/wallet.css'
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { createPasskey, hashWithPasskey } from '@/lib/passkey'
 import { MonaWallet, type AssetBalance } from '@/lib/monawallet'
+import { checkBestServer } from '@/lib/monaparty'
 import MessageBoard from '@/components/MessageBoard.vue'
 
 const WEBAUTHN_RPID = location.hostname
@@ -351,4 +352,14 @@ const formatAssetQuantity = (quantity: number | bigint, divisible: boolean): str
   }
   return quantityStr
 }
+
+onMounted(async () => {
+  try {
+    const endpoint = await checkBestServer()
+    console.log('Selected Monaparty endpoint:', endpoint)
+  } catch (error) {
+    console.error('Failed to select Monaparty endpoint:', error)
+    alert('Monaparty サーバーの稼働が確認できないため、一部機能が利用できない可能性があります')
+  }
+})
 </script>

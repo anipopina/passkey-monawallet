@@ -1,10 +1,23 @@
 // Monaparty API Module
 
-const MONAPARTY_ENDPOINT = 'https://monapa.electrum-mona.org/_api'
-//const MONAPARTY_ENDPOINT = 'https://wallet.monaparty.me/_api'
-
 import jsonBigint from 'json-bigint'
 const JSONbig = jsonBigint({ useNativeBigInt: true })
+
+const MONAPARTY_ENDPOINTS = ['https://monapa.electrum-mona.org/_api', 'https://wallet.monaparty.me/_api']
+let bestEndpoint: string = ''
+
+export async function checkBestServer(): Promise<string> {
+  const promises = []
+  for (const endpoint of MONAPARTY_ENDPOINTS) {
+    promises.push(counterpartyRpc('get_assets', { limit: 1 }, endpoint).then(() => endpoint))
+  }
+  try {
+    bestEndpoint = await Promise.any(promises)
+    return bestEndpoint
+  } catch {
+    throw new Error('All Monaparty endpoints are unavailable')
+  }
+}
 
 // #region CounterpartyAPI
 /*
@@ -493,6 +506,28 @@ export type BlockInfo = {
   block_hash: string
 }
 
+export async function getUnspentTxouts(
+  address: string,
+  { unconfirmed, unspentTxHash, orderBy }: { unconfirmed?: boolean; unspentTxHash?: string; orderBy?: string } = {},
+): Promise<MpUtxo[]> {
+  const params = {
+    address,
+    unconfirmed, // この値と無関係に未確認UTXOが返ってくるときと返ってこないときがある
+    unspent_tx_hash: unspentTxHash, // ドキュメントではboolだが実際はstring  txidを指定するとそのtx由来のutxoだけ返ってくるらしい
+    order_by: orderBy,
+  }
+  return await counterpartyRpc<MpUtxo[]>('get_unspent_txouts', params)
+}
+export type MpUtxo = {
+  confirmations: number // 未確認の場合はなぜか現在のブロック高が入っている
+  amount: number
+  vout: number
+  value: number
+  txid: string
+  height: number // 未確認の場合は-1
+  coinbase: number
+}
+
 export async function getAssetNames(): Promise<string[]> {
   const params = {}
   return await counterpartyRpc<string[]>('get_asset_names', params)
@@ -531,12 +566,12 @@ export async function broadcastTx(signedTxHex: string): Promise<string> {
 
 export async function getChainAddressInfo(
   addresses: string[],
-  { withUtxos = true, withLastTxnHashes = false } = {},
+  { withUtxos, withLastTxnHashes }: { withUtxos?: boolean; withLastTxnHashes?: boolean } = {},
 ): Promise<CbChainAddressInfo[]> {
   const params = {
     addresses,
     with_uxtos: withUtxos,
-    with_last_txn_hashes: withLastTxnHashes, // ドキュメントではintだが実際はtrue/falseでしか処理されない
+    with_last_txn_hashes: withLastTxnHashes, // ドキュメントではintだが実際はtrue/false
   }
   return await counterblockRpc<CbChainAddressInfo[]>('get_chain_address_info', params)
 }
@@ -568,9 +603,13 @@ export type CbUtxo = {
 
 // #region RPC
 
-export async function counterblockRpc<T = JsonValue>(method: string, params: JsonValue): Promise<T> {
+export async function counterblockRpc<T = JsonValue>(
+  method: string,
+  params: JsonValue,
+  endpoint = bestEndpoint || MONAPARTY_ENDPOINTS[0]!,
+): Promise<T> {
   const body = { jsonrpc: '2.0', id: 0, method, params }
-  const res = await fetch(MONAPARTY_ENDPOINT, {
+  const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -584,16 +623,16 @@ export async function counterblockRpc<T = JsonValue>(method: string, params: Jso
   return json.result as T
 }
 
-export async function counterpartyRpc<T = JsonValue>(method: string, params: JsonValue): Promise<T> {
+export async function counterpartyRpc<T = JsonValue>(method: string, params: JsonValue, endpoint?: string): Promise<T> {
   const cbParams = { method, params }
-  return await counterblockRpc<T>('proxy_to_counterpartyd', cbParams)
+  return await counterblockRpc<T>('proxy_to_counterpartyd', cbParams, endpoint)
 }
 
 // #endregion RPC
 
 // #region Utilities
 
-type JsonValue = string | number | bigint | boolean | null | JsonValue[] | { [key: string]: JsonValue } // bigint拡張
+type JsonValue = undefined | string | number | bigint | boolean | null | JsonValue[] | { [key: string]: JsonValue } // bigint拡張
 
 function camelToSnake(str: string): string {
   return str.replace(/([a-z])([A-Z])/g, '$1_$2').toLowerCase()

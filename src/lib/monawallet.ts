@@ -8,6 +8,8 @@ import { hex } from '@scure/base'
 import * as monaparty from './monaparty'
 import * as monapartyCached from './monaparty-cached'
 
+const INSIGHT_ENDPOINT = 'https://mona.insight.monaco-ex.org/insight-api-monacoin/'
+
 const SATOSHI = 100_000_000
 export type AddressType = 'P2PKH' | 'P2WPKH'
 const DEFAULT_ADDRESS_PATH = {
@@ -33,6 +35,7 @@ export class MonaWallet {
   balance = 0
   unconfBalance = 0
   utxos: Utxo[] = []
+  isUnconfUtxoAvailable = false
   // monaparty
   assetBalances: AssetBalance[] = []
 
@@ -64,20 +67,12 @@ export class MonaWallet {
   // #region MonacoinMethods
 
   async updateBalance(): Promise<void> {
-    const result = await monaparty.getChainAddressInfo([this.address], {
-      withUtxos: true,
-      withLastTxnHashes: false,
-    })
-    if (!Array.isArray(result) || result.length === 0 || !result[0]) throw new Error('MonaWallet: balance fetch failed')
-    const info = result[0]
-    const responseUtxos = info.uxtos ?? []
-    const utxos = cbUtxosToUtxos(responseUtxos)
+    const utxos = await this.getUtxos()
     const confirmedSat = utxos.filter((u) => u.confirmations >= 1).reduce((sum, u) => sum + u.value, 0)
     const unconfSat = utxos.filter((u) => u.confirmations < 1).reduce((sum, u) => sum + u.value, 0)
     this.utxos = utxos
     this.balance = confirmedSat / 100_000_000
     this.unconfBalance = unconfSat / 100_000_000
-    // NOTE: getChainAddressInfoで取得したUTXOにはmempoolが反映されない
   }
 
   async sendMona(toAddress: string, amount: number, feeSatPerVByte: number = 200): Promise<string> {
@@ -86,7 +81,7 @@ export class MonaWallet {
     const availableUtxos = this.utxos.filter((u) => u.confirmations >= 1)
     if (availableUtxos.length === 0) throw new Error('No confirmed UTXOs available')
     // construct transaction
-    const tx = new btcSigner.Transaction()
+    const tx = new btcSigner.Transaction({ allowLegacyWitnessUtxo: true })
     let inputTotal = 0
     const usedUtxos: Utxo[] = []
     // add inputs
@@ -108,10 +103,24 @@ export class MonaWallet {
     const estimatedVSize = usedUtxos.length * inputVSize + outputVSize + outputVSize + 10 // inputs + output + change + overhead
     const feeSat = Math.ceil(estimatedVSize * feeSatPerVByte)
     const changeSat = inputTotal - amountSat - feeSat
-    if (changeSat < 0) throw new Error(`Insufficient balance. Need ${amountSat + feeSat} sat, have ${inputTotal} sat`)
+    if (changeSat < 0)
+      throw new Error(`Insufficient balance. Need ${(amountSat + feeSat) / SATOSHI} MONA, have ${inputTotal / SATOSHI} MONA`)
     if (changeSat > 546) tx.addOutputAddress(this.address, BigInt(changeSat), MONA_NETWORK) // ダストでなければお釣りを回収
     const txId = await this.signAndBroadcastTx(tx)
     return txId
+  }
+
+  async getUtxos(): Promise<Utxo[]> {
+    if (this.addressType === 'P2PKH') {
+      try {
+        this.isUnconfUtxoAvailable = true // Insight APIはmempoolを反映する
+        return await getInsightUtxos(this.address)
+      } catch (error) {
+        console.warn('Insight API failed, falling back to Counterblock UTXO fetch:', error)
+      }
+    }
+    this.isUnconfUtxoAvailable = false // getChainAddressInfoはmempoolを反映しない
+    return await getCounterblockUtxos(this.address)
   }
 
   // #endregion MonacoinMethods
@@ -143,6 +152,7 @@ export class MonaWallet {
       asset: asset,
       quantity: quantity,
       feePerKb: feeSatPerByte * 1000,
+      allowUnconfirmedInputs: this.isUnconfUtxoAvailable,
     })
     inspectMonapartyTxHex(txHex, this.address)
     const txId = await this.signAndBroadcastMonapartyTxHex(txHex)
@@ -157,6 +167,7 @@ export class MonaWallet {
       timestamp: Math.floor(Date.now() / 1000),
       feeFraction: 0,
       feePerKb: feeSatPerByte * 1000,
+      allowUnconfirmedInputs: this.isUnconfUtxoAvailable,
     })
     const txId = await this.signAndBroadcastMonapartyTxHex(txHex)
     return txId
@@ -171,7 +182,7 @@ export class MonaWallet {
   }
 
   async signAndBroadcastMonapartyTxHex(txHex: string): Promise<string> {
-    // createXXXで生成されたtxHexは形式が古いのでPSBTとして再構築する
+    // createXXXで生成されたtxHexは形式が古いのでPSBTで再構築する
     await this.updateBalance() // 最新のUTXO情報が必要
     const txBytes = hex.decode(txHex)
     const mpTx = btcSigner.Transaction.fromRaw(txBytes, {
@@ -231,6 +242,40 @@ function inspectMonapartyTxHex(txHex: string, sourceAddress: string): void {
     throw new Error(`Transaction sends too much MONA from your address.\nActual outflow: ${Number(actualOutflowSat) / SATOSHI} MONA`)
 }
 
+export async function getInsightUtxos(address: string): Promise<Utxo[]> {
+  const url = `${INSIGHT_ENDPOINT}addrs/${address}/utxo`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Insight API error: HTTP ${res.status}`)
+  const insUtxos: InsightUtxo[] = await res.json()
+  const utxos = insUtxos.map((u) => {
+    return {
+      txid: u.txid,
+      vout: u.vout,
+      value: u.satoshis,
+      amount: u.amount.toString(),
+      confirmations: u.confirmations,
+    }
+  })
+  return utxos
+}
+
+export async function getCounterblockUtxos(address: string): Promise<Utxo[]> {
+  const result = await monaparty.getChainAddressInfo([address], { withUtxos: true, withLastTxnHashes: false })
+  if (!result[0]) throw new Error('MonaWallet: balance fetch failed')
+  const info = result[0]
+  const cbUtxos = info.uxtos || []
+  const utxos = cbUtxos.map((u) => {
+    return {
+      txid: u.txid,
+      vout: u.vout,
+      value: Math.round(Number(u.amount) * SATOSHI),
+      amount: u.amount,
+      confirmations: u.confirmations,
+    }
+  })
+  return utxos
+}
+
 function sortAssetBalances(a: AssetBalance, b: AssetBalance): number {
   // 1. XMP first
   if (a.asset === 'XMP') return -1
@@ -244,18 +289,6 @@ function sortAssetBalances(a: AssetBalance, b: AssetBalance): number {
   if (a.assetMainName < b.assetMainName) return -1
   if (a.assetMainName > b.assetMainName) return 1
   return 0
-}
-
-function cbUtxosToUtxos(mUtxos: monaparty.CbUtxo[]): Utxo[] {
-  return mUtxos.map((cbUtxo) => {
-    return {
-      txid: cbUtxo.txid,
-      vout: cbUtxo.vout,
-      value: Math.round(Number(cbUtxo.amount) * SATOSHI),
-      amount: cbUtxo.amount,
-      confirmations: cbUtxo.confirmations,
-    }
-  })
 }
 
 function amountToQuantity(amount: number | string, divisible: boolean): bigint {
@@ -293,3 +326,14 @@ export type AssetBalance = {
   assetSubName: string | null
 } & monaparty.Balance &
   monaparty.AssetInfo
+
+export type InsightUtxo = {
+  address: string
+  txid: string
+  vout: number
+  scriptPubKey: string
+  amount: number
+  satoshis: number
+  height: number
+  confirmations: number
+}
