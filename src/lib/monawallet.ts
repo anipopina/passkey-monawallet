@@ -9,7 +9,11 @@ import * as monaparty from './monaparty'
 import * as monapartyCached from './monaparty-cached'
 
 const SATOSHI = 100_000_000
-const DEFAULT_ADDRESS_PATH = "m/84'/22'/0'/0/0" // BIP84 Monacoin
+export type AddressType = 'P2PKH' | 'P2WPKH'
+const DEFAULT_ADDRESS_PATH = {
+  P2PKH: "m/44'/22'/0'/0/0", // BIP44 Monacoin
+  P2WPKH: "m/84'/22'/0'/0/0", // BIP84 Monacoin
+}
 const MONA_NETWORK = {
   bech32: 'mona',
   pubKeyHash: 0x32, // 50
@@ -18,11 +22,13 @@ const MONA_NETWORK = {
 } as const
 
 export class MonaWallet {
-  readonly address: string // P2WPKH
-  readonly derivationPath: string
+  readonly address: string
+  readonly addressType: AddressType // 取引所の対応状況やMonaparty仕様の問題があるためP2PKH推奨
+  readonly addressPath: string
   readonly entropy: Uint8Array // 256bit
   readonly mnemonic: string // BIP39 24words
-  readonly hdKey: unknown // HACK: HDKeyの型定義の問題でエラーが出るためanyにしてアサーションしながら使う
+  readonly privateKey: Uint8Array
+  readonly script: Uint8Array
   // mona
   balance = 0
   unconfBalance = 0
@@ -30,18 +36,29 @@ export class MonaWallet {
   // monaparty
   assetBalances: AssetBalance[] = []
 
-  constructor(entropy: Uint8Array, derivationPath: string = DEFAULT_ADDRESS_PATH) {
+  constructor(entropy: Uint8Array, addressType: AddressType = 'P2PKH', addressPath: string = DEFAULT_ADDRESS_PATH[addressType]) {
+    this.addressType = addressType
+    this.addressPath = addressPath
     this.entropy = new Uint8Array(entropy)
     this.mnemonic = bip39.entropyToMnemonic(this.entropy, wordlist)
-    this.derivationPath = derivationPath
+
     const seed = bip39.mnemonicToSeedSync(this.mnemonic)
     const root = HDKey.fromMasterSeed(seed)
-    const child = root.derive(this.derivationPath)
-    if (!child.publicKey) throw new Error('MonaWallet: Failed to derive public key')
-    this.hdKey = child
-    const p2wpkh = btcSigner.p2wpkh(child.publicKey, MONA_NETWORK)
-    if (!p2wpkh.address) throw new Error('MonaWallet: Failed to generate address')
-    this.address = p2wpkh.address
+    const child = root.derive(this.addressPath)
+    if (!child.publicKey || !child.privateKey) throw new Error('MonaWallet: Failed to derive key')
+    this.privateKey = child.privateKey
+
+    if (addressType === 'P2PKH') {
+      const p2pkh = btcSigner.p2pkh(child.publicKey, MONA_NETWORK)
+      if (!p2pkh.address) throw new Error('MonaWallet: Failed to generate address')
+      this.address = p2pkh.address
+      this.script = p2pkh.script
+    } else {
+      const p2wpkh = btcSigner.p2wpkh(child.publicKey, MONA_NETWORK)
+      if (!p2wpkh.address) throw new Error('MonaWallet: Failed to generate address')
+      this.address = p2wpkh.address
+      this.script = p2wpkh.script
+    }
   }
 
   // #region MonacoinMethods
@@ -64,7 +81,6 @@ export class MonaWallet {
   }
 
   async sendMona(toAddress: string, amount: number, feeSatPerVByte: number = 200): Promise<string> {
-    const hdKey = this.hdKey as HDKey
     const amountSat = Math.floor(amount * SATOSHI)
     if (amountSat <= 0) throw new Error('Amount must be greater than 0')
     const availableUtxos = this.utxos.filter((u) => u.confirmations >= 1)
@@ -73,22 +89,23 @@ export class MonaWallet {
     const tx = new btcSigner.Transaction()
     let inputTotal = 0
     const usedUtxos: Utxo[] = []
+    // add inputs
     for (const utxo of availableUtxos) {
       tx.addInput({
         txid: utxo.txid,
         index: utxo.vout,
-        witnessUtxo: {
-          script: btcSigner.p2wpkh(hdKey.publicKey!, MONA_NETWORK).script,
-          amount: BigInt(utxo.value),
-        },
+        witnessUtxo: { script: this.script, amount: BigInt(utxo.value) },
       })
       inputTotal += utxo.value
       usedUtxos.push(utxo)
-      if (inputTotal >= amountSat + SATOSHI / 1000) break // 手数料を考慮して多めに確保
+      if (inputTotal >= amountSat + SATOSHI / 1000) break
     }
-    tx.addOutputAddress(toAddress, BigInt(amountSat), MONA_NETWORK)
-    // fee and change calculation, P2WPKH input: ~68 vbytes, output: ~31 vbytes
-    const estimatedVSize = usedUtxos.length * 68 + 31 + 31 + 10 // inputs + output + change + overhead
+    tx.addOutputAddress(toAddress, BigInt(amountSat), MONA_NETWORK) // add output
+    // fee and change calculation
+    // P2PKH input: ~148 vbytes, P2WPKH input: ~68 vbytes, output: ~31-34 vbytes
+    const inputVSize = this.addressType === 'P2PKH' ? 148 : 68
+    const outputVSize = 34
+    const estimatedVSize = usedUtxos.length * inputVSize + outputVSize + outputVSize + 10 // inputs + output + change + overhead
     const feeSat = Math.ceil(estimatedVSize * feeSatPerVByte)
     const changeSat = inputTotal - amountSat - feeSat
     if (changeSat < 0) throw new Error(`Insufficient balance. Need ${amountSat + feeSat} sat, have ${inputTotal} sat`)
@@ -146,9 +163,7 @@ export class MonaWallet {
   }
 
   async signAndBroadcastTx(tx: btcSigner.Transaction): Promise<string> {
-    const hdKey = this.hdKey as HDKey
-    if (!hdKey.privateKey) throw new Error('MonaWallet: Private key not available')
-    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(hdKey.privateKey, i)
+    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(this.privateKey, i)
     tx.finalize()
     const signedTxHex = hex.encode(tx.extract())
     const txId = await monaparty.broadcastTx(signedTxHex)
@@ -158,7 +173,6 @@ export class MonaWallet {
   async signAndBroadcastMonapartyTxHex(txHex: string): Promise<string> {
     // createXXXで生成されたtxHexは形式が古いのでPSBTとして再構築する
     await this.updateBalance() // 最新のUTXO情報が必要
-    const hdKey = this.hdKey as HDKey
     const txBytes = hex.decode(txHex)
     const mpTx = btcSigner.Transaction.fromRaw(txBytes, {
       allowUnknownInputs: true,
@@ -169,8 +183,6 @@ export class MonaWallet {
       allowUnknownOutputs: true,
       disableScriptCheck: true,
     })
-    if (!hdKey.publicKey) throw new Error('MonaWallet: Public key not available')
-    const p2wpkhScript = btcSigner.p2wpkh(hdKey.publicKey, MONA_NETWORK).script
     // inputsをコピー（witnessUtxoを追加）
     for (let i = 0; i < mpTx.inputsLength; i++) {
       const input = mpTx.getInput(i)
@@ -181,20 +193,14 @@ export class MonaWallet {
         txid: inputTxid,
         index: input.index,
         sequence: input.sequence,
-        witnessUtxo: {
-          script: p2wpkhScript,
-          amount: BigInt(utxo.value),
-        },
+        witnessUtxo: { script: this.script, amount: BigInt(utxo.value) },
       })
     }
     // outputsをコピー
     for (let i = 0; i < mpTx.outputsLength; i++) {
       const output = mpTx.getOutput(i)
       if (output.script && output.amount !== undefined) {
-        newTx.addOutput({
-          script: output.script,
-          amount: output.amount,
-        })
+        newTx.addOutput({ script: output.script, amount: output.amount })
       }
     }
     return await this.signAndBroadcastTx(newTx)

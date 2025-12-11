@@ -12,6 +12,19 @@
     <section class="card">
       <h2>2. ウォレットを開く</h2>
       <p>登録済みの Passkey を使ってウォレットを生成します</p>
+      <div class="field">
+        <div class="toggle-container">
+          <span class="toggle-label">Address Type:</span>
+          <label class="toggle-switch">
+            <input type="checkbox" v-model="useSegWit" class="toggle-input" />
+            <span class="toggle-slider"></span>
+          </label>
+          <span class="toggle-type">{{ useSegWit ? 'P2WPKH (mona1-prefix)' : 'P2PKH (M-prefix)' }}</span>
+        </div>
+        <p v-if="useSegWit" class="caution">
+          P2WPKH (mona1-prefix) のアドレスは取引所の対応状況やMonapartyの仕様で不便があるので注意してください
+        </p>
+      </div>
       <button class="btn primary" @click="signIn">Open Passkey Wallet</button>
     </section>
 
@@ -189,6 +202,7 @@ const WEBAUTHN_USERNAME = 'Passkey MONA User'
 const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
 
 const activeTab = ref<'monacoin' | 'monaparty' | 'messageboard'>('monacoin')
+const useSegWit = ref(false)
 const isMnemonicOpen = ref(false)
 const isBalanceLoading = ref(false)
 const isAssetBalanceLoading = ref(false)
@@ -216,7 +230,7 @@ const signUp = async () => {
 const signIn = async () => {
   try {
     const { prfOutput } = await hashWithPasskey(WEBAUTHN_RPID, WEBAUTHN_MESSAGETOHASH)
-    wallet.value = new MonaWallet(prfOutput)
+    wallet.value = new MonaWallet(prfOutput, useSegWit.value ? 'P2WPKH' : 'P2PKH')
     await refreshBalance()
     await refreshAssetBalance()
   } catch (error) {
