@@ -182,6 +182,7 @@ export class MonaWallet {
     const newTx = new btcSigner.Transaction({
       allowUnknownOutputs: true,
       disableScriptCheck: true,
+      allowLegacyWitnessUtxo: true,
     })
     // inputsをコピー（witnessUtxoを追加）
     for (let i = 0; i < mpTx.inputsLength; i++) {
