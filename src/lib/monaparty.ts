@@ -479,6 +479,12 @@ export type GetUnspentTxoutsParams = {
   orderBy?: string
 }
 
+export type GetRawTransactionParams = {
+  txHash: string
+  verbose?: boolean // trueにするとオブジェクトで追加の情報が返ってくる
+  skipMissing?: boolean // 効かない
+}
+
 // output
 
 export type AssetInfo = {
@@ -541,6 +547,11 @@ export async function getBlockInfo(blockIndex: number): Promise<BlockInfo> {
 
 export async function getUnspentTxouts(params: GetUnspentTxoutsParams): Promise<UnspentTxout[]> {
   return await counterpartyRpc<UnspentTxout[]>('get_unspent_txouts', camelKeysToSnakeKeys(params))
+}
+
+// verbose=true の戻り値が面倒なのでとりあえず verbose=false の場合だけ定義
+export async function getRawTransaction(params: GetRawTransactionParams & { verbose?: false }): Promise<string> {
+  return await counterpartyRpc<string>('getrawtransaction', camelKeysToSnakeKeys(params))
 }
 
 export async function getAssetNames(): Promise<string[]> {
