@@ -351,6 +351,15 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true
 }
 
+export function validateAddress(address: string): boolean {
+  try {
+    const decoded = btcSigner.Address(MONA_NETWORK).decode(address)
+    return decoded !== null
+  } catch {
+    return false
+  }
+}
+
 // #endregion
 
 // #region Types

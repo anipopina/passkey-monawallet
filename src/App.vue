@@ -205,7 +205,7 @@
 import '@/styles/wallet.css'
 import { ref, computed, onMounted } from 'vue'
 import { createPasskey, hashWithPasskey } from '@/lib/passkey'
-import { MonaWallet, type AssetBalance } from '@/lib/monawallet'
+import { MonaWallet, validateAddress, type AssetBalance } from '@/lib/monawallet'
 import { selectBestEndpoint } from '@/lib/monaparty'
 import MessageBoard from '@/components/MessageBoard.vue'
 
@@ -255,6 +255,7 @@ const signIn = async () => {
 const sendMona = async () => {
   const currentWallet = wallet.value
   if (!currentWallet) return
+  if (!validateAddress(sendToAddress.value)) return alert('無効なモナコインアドレスです')
   if (!confirm(`${sendAmount.value} MONA を ${sendToAddress.value} に送りますか？`)) return
   isSending.value = true
   try {
@@ -289,6 +290,7 @@ const setMaxAmount = (balance: AssetBalance) => {
 const sendAsset = async (balance: AssetBalance) => {
   const currentWallet = wallet.value
   if (!currentWallet) return
+  if (!validateAddress(assetSendToAddress.value)) return alert('無効なモナコインアドレスです')
   if (!confirm(`${assetSendAmount.value} ${balance.assetMainName} を ${assetSendToAddress.value} に送りますか？`)) return
   isSendingAsset.value = true
   try {
