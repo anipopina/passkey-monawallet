@@ -1,3 +1,5 @@
+// cached version of monaparty functions
+
 import * as monaparty from './monaparty'
 
 export const assetInfoCache = new Map<string, monaparty.AssetInfo>()

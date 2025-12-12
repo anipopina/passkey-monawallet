@@ -3,12 +3,14 @@
     <h1>Passkey Monacoin Wallet</h1>
     <p class="subtitle">Passkey を使ってモナコインのウォレットを生成するサンプルです</p>
 
+    <!-- Sign Up Section -->
     <section class="card">
       <h2>1. Passkey を登録する</h2>
       <p>ブラウザやデバイスに新しい Passkey を登録します</p>
       <button class="btn primary" @click="signUp">Create Passkey</button>
     </section>
 
+    <!-- Sign In Section -->
     <section class="card">
       <h2>2. ウォレットを開く</h2>
       <p>登録済みの Passkey を使ってウォレットを生成します</p>
@@ -28,6 +30,7 @@
       <button class="btn primary" @click="signIn">Open Passkey Wallet</button>
     </section>
 
+    <!-- Wallet Section -->
     <section v-if="wallet" class="card">
       <h2>Passkey Wallet Opened!</h2>
       <p>Passkey から モナコイン / Monaparty のウォレットを生成しました</p>
@@ -83,7 +86,7 @@
 
         <div class="field">
           <label class="label">Recipient Address</label>
-          <input v-model="sendToAddress" type="text" class="input" placeholder="Monacoin Address" />
+          <input v-model="sendToAddress" type="text" class="input" placeholder="Monacoin Address" data-lpignore="true" data-1p-ignore />
         </div>
 
         <div class="field">
@@ -136,11 +139,18 @@
               Send {{ balance.assetMainName }}
             </button>
 
-            <!-- アセット送信フォーム（選択時のみ表示） -->
+            <!-- asset send form -->
             <div v-else class="send-form">
               <div class="field-small">
                 <label class="label-small">To Address</label>
-                <input v-model="assetSendToAddress" type="text" class="input-small" placeholder="Monacoin Address" />
+                <input
+                  v-model="assetSendToAddress"
+                  type="text"
+                  class="input-small"
+                  placeholder="Monacoin Address"
+                  data-lpignore="true"
+                  data-1p-ignore
+                />
               </div>
 
               <div class="field-small">
@@ -150,6 +160,8 @@
                     v-model="assetSendAmount"
                     type="text"
                     class="input-small"
+                    data-lpignore="true"
+                    data-1p-ignore
                     :placeholder="balance.divisible ? '0.0' : '0'"
                     @input="validateAssetAmount($event, balance.divisible)"
                   />
@@ -199,8 +211,8 @@ import MessageBoard from '@/components/MessageBoard.vue'
 
 const WEBAUTHN_RPID = location.hostname
 const WEBAUTHN_RPNAME = 'Passkey Monacoin Wallet'
-const WEBAUTHN_USERNAME = 'Passkey MONA User'
-const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1'
+const WEBAUTHN_USERNAME_PREFIX = 'Monar'
+const WEBAUTHN_MESSAGETOHASH = 'wallet-seed:v1' // シード生成用の固定メッセージ
 
 const activeTab = ref<'monacoin' | 'monaparty' | 'messageboard'>('monacoin')
 const useSegWit = ref(false)
@@ -220,7 +232,7 @@ const assetSendAmount = ref('')
 
 const signUp = async () => {
   try {
-    await createPasskey(WEBAUTHN_RPID, WEBAUTHN_RPNAME, WEBAUTHN_USERNAME)
+    await createPasskey(WEBAUTHN_RPID, WEBAUTHN_RPNAME, generateUserName(WEBAUTHN_USERNAME_PREFIX))
     alert('Passkey の登録に成功しました！')
   } catch (error) {
     console.error('SignUp error:', error)
@@ -351,6 +363,14 @@ const formatAssetQuantity = (quantity: number | bigint, divisible: boolean): str
     quantityStr = quantityStr.slice(0, -8) + '.' + quantityStr.slice(-8)
   }
   return quantityStr
+}
+
+const generateUserName = (prefix: string): string => {
+  const today = new Date()
+  const yyyy = today.getFullYear()
+  const mm = String(today.getMonth() + 1).padStart(2, '0')
+  const dd = String(today.getDate()).padStart(2, '0')
+  return `${prefix} ${yyyy}-${mm}-${dd}`
 }
 
 onMounted(async () => {
