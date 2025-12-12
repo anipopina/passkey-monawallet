@@ -194,7 +194,7 @@ import '@/styles/wallet.css'
 import { ref, computed, onMounted } from 'vue'
 import { createPasskey, hashWithPasskey } from '@/lib/passkey'
 import { MonaWallet, type AssetBalance } from '@/lib/monawallet'
-import { checkBestServer } from '@/lib/monaparty'
+import { selectBestEndpoint } from '@/lib/monaparty'
 import MessageBoard from '@/components/MessageBoard.vue'
 
 const WEBAUTHN_RPID = location.hostname
@@ -355,7 +355,7 @@ const formatAssetQuantity = (quantity: number | bigint, divisible: boolean): str
 
 onMounted(async () => {
   try {
-    const endpoint = await checkBestServer()
+    const endpoint = await selectBestEndpoint()
     console.log('Selected Monaparty endpoint:', endpoint)
   } catch (error) {
     console.error('Failed to select Monaparty endpoint:', error)

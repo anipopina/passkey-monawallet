@@ -5,11 +5,9 @@ import * as bip39 from '@scure/bip39'
 import * as btcSigner from '@scure/btc-signer'
 import { wordlist } from '@scure/bip39/wordlists/english.js'
 import { hex } from '@scure/base'
+import * as esplora from './esplora'
 import * as monaparty from './monaparty'
 import * as monapartyCached from './monaparty-cached'
-
-const ESPLORA_ENDPOINT = 'https://esplora.electrum-mona.org/api/'
-const INSIGHT_ENDPOINT = 'https://mona.insight.monaco-ex.org/insight-api-monacoin/'
 
 const SATOSHI = 100_000_000
 export type AddressType = 'P2PKH' | 'P2WPKH'
@@ -37,6 +35,7 @@ export class MonaWallet {
   unconfBalance = 0
   utxos: Utxo[] = []
   isUnconfUtxoAvailable = false
+  useEsplora = true
   // monaparty
   assetBalances: AssetBalance[] = []
 
@@ -111,26 +110,40 @@ export class MonaWallet {
     return txId
   }
 
-  async getUtxos(): Promise<Utxo[]> {
-    try {
-      this.isUnconfUtxoAvailable = true
-      return await getEsploraUtxo(this.address)
-    } catch (error) {
-      console.warn('Esplora API failed, falling back to Counterblock UTXO fetch:', error)
+  async signAndBroadcastTx(tx: btcSigner.Transaction): Promise<string> {
+    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(this.privateKey, i)
+    tx.finalize()
+    const signedTxHex = hex.encode(tx.extract())
+    return await this.broadcastTx(signedTxHex)
+  }
+
+  async broadcastTx(txHex: string): Promise<string> {
+    if (this.useEsplora) {
+      try {
+        return await esplora.postTx(txHex)
+      } catch (error) {
+        console.warn('Esplora API failed, falling back to Monaparty API:', error)
+        this.useEsplora = false
+      }
     }
-    if (this.addressType === 'P2PKH') {
+    return await monaparty.broadcastTx(txHex)
+  }
+
+  async getUtxos(): Promise<Utxo[]> {
+    if (this.useEsplora) {
       try {
         this.isUnconfUtxoAvailable = true
-        return await getInsightUtxos(this.address)
+        return await getEsploraUtxo(this.address)
       } catch (error) {
-        console.warn('Insight API failed, falling back to Counterblock UTXO fetch:', error)
+        console.warn('Esplora API failed, falling back to Monaparty API:', error)
+        this.useEsplora = false
       }
     }
     this.isUnconfUtxoAvailable = false // getChainAddressInfoはmempoolを反映しない
     return await getCounterblockUtxos(this.address)
   }
 
-  // #endregion MonacoinMethods
+  // #endregion
 
   // #region MonapartyMethods
 
@@ -180,17 +193,9 @@ export class MonaWallet {
     return txId
   }
 
-  async signAndBroadcastTx(tx: btcSigner.Transaction): Promise<string> {
-    for (let i = 0; i < tx.inputsLength; i++) tx.signIdx(this.privateKey, i)
-    tx.finalize()
-    const signedTxHex = hex.encode(tx.extract())
-    const txId = await monaparty.broadcastTx(signedTxHex)
-    return txId
-  }
-
   async signAndBroadcastMonapartyTxHex(txHex: string): Promise<string> {
     // createXXXで生成されたtxHexは形式が古いのでPSBTで再構築する
-    await this.updateBalance() // 最新のUTXO情報が必要
+    await this.updateBalance() // UTXOを最新化
     const txBytes = hex.decode(txHex)
     const mpTx = btcSigner.Transaction.fromRaw(txBytes, {
       allowUnknownInputs: true,
@@ -225,8 +230,10 @@ export class MonaWallet {
     return await this.signAndBroadcastTx(newTx)
   }
 
-  // #endregion MonapartyMethods
+  // #endregion
 }
+
+// #region Utilities
 
 function inspectMonapartyTxHex(txHex: string, sourceAddress: string): void {
   // txHexの中身を解析してアドレスから出ていくMONAが多すぎたら例外を投げる
@@ -249,27 +256,8 @@ function inspectMonapartyTxHex(txHex: string, sourceAddress: string): void {
     throw new Error(`Transaction sends too much MONA from your address.\nActual outflow: ${Number(actualOutflowSat) / SATOSHI} MONA`)
 }
 
-async function getInsightUtxos(address: string): Promise<Utxo[]> {
-  const url = `${INSIGHT_ENDPOINT}addrs/${address}/utxo`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Insight API error: HTTP ${res.status}`)
-  const insUtxos: InsightUtxo[] = await res.json()
-  const utxos = insUtxos.map((u) => {
-    return {
-      txid: u.txid,
-      vout: u.vout,
-      value: u.satoshis,
-      confirmed: u.confirmations > 0,
-    }
-  })
-  return utxos
-}
-
 async function getEsploraUtxo(address: string): Promise<Utxo[]> {
-  const url = `${ESPLORA_ENDPOINT}address/${address}/utxo`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Esplora API error: HTTP ${res.status}`)
-  const esUtxos: EsploraUtxo[] = await res.json()
+  const esUtxos = await esplora.getUtxos(address)
   const utxos = esUtxos.map((u) => {
     return {
       txid: u.txid,
@@ -282,7 +270,7 @@ async function getEsploraUtxo(address: string): Promise<Utxo[]> {
 }
 
 async function getCounterblockUtxos(address: string): Promise<Utxo[]> {
-  const result = await monaparty.getChainAddressInfo([address], { withUtxos: true, withLastTxnHashes: false })
+  const result = await monaparty.getChainAddressInfo({ addresses: [address], withUxtos: true, withLastTxnHashes: false })
   if (!result[0]) throw new Error('MonaWallet: balance fetch failed')
   const info = result[0]
   const cbUtxos = info.uxtos || []
@@ -334,7 +322,11 @@ function arraysEqual(a: Uint8Array, b: Uint8Array): boolean {
   return true
 }
 
-type Utxo = {
+// #endregion
+
+// #region Types
+
+export type Utxo = {
   txid: string
   vout: number
   value: number
@@ -347,25 +339,4 @@ export type AssetBalance = {
 } & monaparty.Balance &
   monaparty.AssetInfo
 
-export type InsightUtxo = {
-  address: string
-  txid: string
-  vout: number
-  scriptPubKey: string
-  amount: number
-  satoshis: number
-  height: number
-  confirmations: number
-}
-
-export type EsploraUtxo = {
-  txid: string
-  vout: number
-  value: number
-  status: {
-    confirmed: boolean
-    block_height?: number
-    block_hash?: string
-    block_time?: number
-  }
-}
+// #endregion

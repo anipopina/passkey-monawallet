@@ -3,13 +3,22 @@
 import jsonBigint from 'json-bigint'
 const JSONbig = jsonBigint({ useNativeBigInt: true })
 
-const MONAPARTY_ENDPOINTS = ['https://monapa.electrum-mona.org/_api', 'https://wallet.monaparty.me/_api']
+const DEFAULT_ENDPOINTS = ['https://monapa.electrum-mona.org/_api', 'https://wallet.monaparty.me/_api']
+let endpoints = DEFAULT_ENDPOINTS
 let bestEndpoint: string = ''
 
-// 最初にこれを呼んでおくと調子の良いサーバーを使ってくれます
-export async function checkBestServer(): Promise<string> {
+// #region SetupFunctions
+
+// Monapartyサーバのリストを設定
+export const setEndpoints = (newEndpoints: string[]) => {
+  endpoints = newEndpoints
+  bestEndpoint = ''
+}
+
+// 調子の良いサーバーを選択
+export async function selectBestEndpoint(): Promise<string> {
   const promises = []
-  for (const endpoint of MONAPARTY_ENDPOINTS) {
+  for (const endpoint of endpoints) {
     promises.push(counterpartyRpc('get_assets', { limit: 1 }, endpoint).then(() => endpoint))
   }
   try {
@@ -20,7 +29,9 @@ export async function checkBestServer(): Promise<string> {
   }
 }
 
-// #region CounterpartyAPI
+// #endregion
+
+// CounterpartyAPI
 /*
 参考:
 https://docs.counterparty.io/docs/advanced/api-v1/api-v1-spec/
@@ -30,7 +41,7 @@ https://github.com/monaparty/counterparty-lib/blob/monaparty-develop/counterpart
 検証にはこちらのツールが便利です https://monapalette.komikikaku.com/monaparty_api
 */
 
-//// #region GetTableAPI
+// #region GetTableAPI
 
 export type TableName =
   | 'addresses'
@@ -70,8 +81,14 @@ export type TableName =
   | 'transactions'
   | 'pubkeys'
 
+// input
+
 export type GetTableParams = {
-  filters?: Filter[]
+  filters?: {
+    field: string
+    op: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'IN' | 'LIKE' | 'NOT IN' | 'NOT LIKE' // LIKEは前方一致のみ
+    value: string | number | boolean | null | (string | number)[]
+  }[]
   filterOp?: 'AND' | 'OR'
   orderBy?: string
   orderDir?: 'ASC' | 'DESC'
@@ -81,15 +98,9 @@ export type GetTableParams = {
   limit?: number
   offset?: number
 }
-export type Filter = {
-  field: string
-  op: '==' | '!=' | '>' | '<' | '>=' | '<=' | 'IN' | 'LIKE' | 'NOT IN' | 'NOT LIKE' // LIKEは前方一致のみ
-  value: string | number | boolean | null | (string | number)[]
-}
 
-export async function getAssets(params: GetTableParams): Promise<Asset[]> {
-  return await counterpartyRpc<Asset[]>('get_assets', camelKeysToSnakeKeys(params))
-}
+// output
+
 export type Asset = {
   asset_id: string
   asset_longname: string | null
@@ -98,9 +109,6 @@ export type Asset = {
   block_index: number | null
 }
 
-export async function getAssetgroups(params: GetTableParams): Promise<Assetgroup[]> {
-  return await counterpartyRpc<Assetgroup[]>('get_assetgroups', camelKeysToSnakeKeys(params))
-}
 export type Assetgroup = {
   status: string
   asset_group: string
@@ -111,18 +119,12 @@ export type Assetgroup = {
   owner: string
 }
 
-export async function getBalances(params: GetTableParams): Promise<Balance[]> {
-  return await counterpartyRpc<Balance[]>('get_balances', camelKeysToSnakeKeys(params))
-}
 export type Balance = {
   asset: string
   quantity: number | bigint
   address: string
 }
 
-export async function getIssuances(params: GetTableParams): Promise<Issuance[]> {
-  return await counterpartyRpc<Issuance[]>('get_issuances', camelKeysToSnakeKeys(params))
-}
 export type Issuance = {
   asset_longname: string | null
   callable: number
@@ -148,9 +150,6 @@ export type Issuance = {
   tx_hash: string
 }
 
-export async function getDispensers(params: GetTableParams): Promise<Dispenser[]> {
-  return await counterpartyRpc<Dispenser[]>('get_dispensers', camelKeysToSnakeKeys(params))
-}
 export type Dispenser = {
   give_remaining: number | bigint
   asset: string
@@ -164,9 +163,6 @@ export type Dispenser = {
   escrow_quantity: number | bigint
 }
 
-export async function getBroadcasts(params: GetTableParams): Promise<Broadcast[]> {
-  return await counterpartyRpc<Broadcast[]>('get_broadcasts', camelKeysToSnakeKeys(params))
-}
 export type Broadcast = {
   timestamp: number
   status: string
@@ -180,9 +176,6 @@ export type Broadcast = {
   text: string
 }
 
-export async function getCredits(params: GetTableParams): Promise<Credit[]> {
-  return await counterpartyRpc<Credit[]>('get_credits', camelKeysToSnakeKeys(params))
-}
 export type Credit = {
   asset: string
   quantity: number | bigint
@@ -192,9 +185,6 @@ export type Credit = {
   calling_function: string
 }
 
-export async function getDebits(params: GetTableParams): Promise<Debit[]> {
-  return await counterpartyRpc<Debit[]>('get_debits', camelKeysToSnakeKeys(params))
-}
 export type Debit = {
   asset: string
   quantity: number | bigint
@@ -204,15 +194,51 @@ export type Debit = {
   address: string
 }
 
+// functions
+
+export async function getAssets(params: GetTableParams): Promise<Asset[]> {
+  return await getTable<Asset>('assets', params)
+}
+
+export async function getAssetgroups(params: GetTableParams): Promise<Assetgroup[]> {
+  return await getTable<Assetgroup>('assetgroups', params)
+}
+
+export async function getBalances(params: GetTableParams): Promise<Balance[]> {
+  return await getTable<Balance>('balances', params)
+}
+
+export async function getIssuances(params: GetTableParams): Promise<Issuance[]> {
+  return await getTable<Issuance>('issuances', params)
+}
+
+export async function getDispensers(params: GetTableParams): Promise<Dispenser[]> {
+  return await getTable<Dispenser>('dispensers', params)
+}
+
+export async function getBroadcasts(params: GetTableParams): Promise<Broadcast[]> {
+  return await getTable<Broadcast>('broadcasts', params)
+}
+
+export async function getCredits(params: GetTableParams): Promise<Credit[]> {
+  return await getTable<Credit>('credits', params)
+}
+
+export async function getDebits(params: GetTableParams): Promise<Debit[]> {
+  return await getTable<Debit>('debits', params)
+}
+
 // 汎用 get_{tableName}
 export async function getTable<T = JsonValue>(tableName: TableName, params: GetTableParams): Promise<T[]> {
   const method = `get_${tableName}`
   return await counterpartyRpc<T[]>(method, camelKeysToSnakeKeys(params))
 }
 
-//// #endregion GetTableAPI
+// #endregion
 
-//// #region CreateAPI
+// #region CreateAPI
+
+// input
 
 export type CreateTxCommonParams = {
   encoding?: string
@@ -221,7 +247,11 @@ export type CreateTxCommonParams = {
   fee?: number
   feePerKb?: number
   feeProvided?: number
-  customInputs?: InputUtxo[]
+  customInputs?: {
+    txid: string
+    vout: number
+    amount: number
+  }[]
   unspentTxHash?: string
   regularDustSize?: number
   multisigDustSize?: number
@@ -230,11 +260,6 @@ export type CreateTxCommonParams = {
   opReturnValue?: number
   extendedTxInfo?: boolean
   p2shPretxTxid?: string
-}
-export type InputUtxo = {
-  txid: string
-  vout: number
-  amount: number
 }
 
 export type CreateSendParams = {
@@ -274,28 +299,17 @@ export type CreateDispenserParams = {
   giveQuantity: number | bigint // close時は0でOK
   escrowQuantity: number | bigint // close時は0でOK
   mainchainrate: number | bigint // giveQuantityあたりの価格 (satoshi), close時は0でOK
-  status: DispenserStatus
+  status: 0 | 1 | 10 // 0=open, 1=open_using_openaddress, 10=closed
   openAddress?: string
   oracleAddress?: string
 } & CreateTxCommonParams
-export enum DispenserStatus {
-  OPEN = 0,
-  OPEN_USING_OPENADDRESS = 1,
-  CLOSED = 10,
-}
 
 export type CreateSweepParams = {
   source: string
   destination: string
-  flags: SweepFlags // OR mask
+  flags: 1 | 2 | 3 | 4 | 5 | 6 | 7 // OR mask of  1=BALANCES, 2=OWNERSHIP, 4=BINARY_MEMO
   memo?: string
 } & CreateTxCommonParams
-export enum SweepFlags {
-  BALANCES = 1,
-  OWNERSHIP = 2,
-  BALANCES_AND_OWNERSHIP = 3, // BALANCES + OWNERSHIP
-  BINARY_MEMO = 4,
-}
 
 export type CreateOrderParams = {
   source: string
@@ -350,91 +364,9 @@ export type CreateBetParams = {
   leverage?: number
 } & CreateTxCommonParams
 
-export async function createSend(params: CreateSendParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createSend(params: CreateSendParams & { extendedTxInfo?: false }): Promise<string>
-export async function createSend(params: CreateSendParams): Promise<string>
-export async function createSend(params: CreateSendParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_send', camelKeysToSnakeKeys(params))
-}
+// output
 
-export async function createIssuance(params: CreateIssuanceParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createIssuance(params: CreateIssuanceParams & { extendedTxInfo?: false }): Promise<string>
-export async function createIssuance(params: CreateIssuanceParams): Promise<string>
-export async function createIssuance(params: CreateIssuanceParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_issuance', camelKeysToSnakeKeys(params))
-}
-
-export async function createDividend(params: CreateDividendParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createDividend(params: CreateDividendParams & { extendedTxInfo?: false }): Promise<string>
-export async function createDividend(params: CreateDividendParams): Promise<string>
-export async function createDividend(params: CreateDividendParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_dividend', camelKeysToSnakeKeys(params))
-}
-
-export async function createDispenser(params: CreateDispenserParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createDispenser(params: CreateDispenserParams & { extendedTxInfo?: false }): Promise<string>
-export async function createDispenser(params: CreateDispenserParams): Promise<string>
-export async function createDispenser(params: CreateDispenserParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_dispenser', camelKeysToSnakeKeys(params))
-}
-
-export async function createSweep(params: CreateSweepParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createSweep(params: CreateSweepParams & { extendedTxInfo?: false }): Promise<string>
-export async function createSweep(params: CreateSweepParams): Promise<string>
-export async function createSweep(params: CreateSweepParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_sweep', camelKeysToSnakeKeys(params))
-}
-
-export async function createOrder(params: CreateOrderParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createOrder(params: CreateOrderParams & { extendedTxInfo?: false }): Promise<string>
-export async function createOrder(params: CreateOrderParams): Promise<string>
-export async function createOrder(params: CreateOrderParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_order', camelKeysToSnakeKeys(params))
-}
-
-export async function createCancel(params: CreateCancelParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createCancel(params: CreateCancelParams & { extendedTxInfo?: false }): Promise<string>
-export async function createCancel(params: CreateCancelParams): Promise<string>
-export async function createCancel(params: CreateCancelParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_cancel', camelKeysToSnakeKeys(params))
-}
-
-export async function createBroadcast(params: CreateBroadcastParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createBroadcast(params: CreateBroadcastParams & { extendedTxInfo?: false }): Promise<string>
-export async function createBroadcast(params: CreateBroadcastParams): Promise<string>
-export async function createBroadcast(params: CreateBroadcastParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_broadcast', camelKeysToSnakeKeys(params))
-}
-
-export async function createDestroy(params: CreateDestroyParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createDestroy(params: CreateDestroyParams & { extendedTxInfo?: false }): Promise<string>
-export async function createDestroy(params: CreateDestroyParams): Promise<string>
-export async function createDestroy(params: CreateDestroyParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_destroy', camelKeysToSnakeKeys(params))
-}
-
-export async function createBtcpay(params: CreateBtcpayParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createBtcpay(params: CreateBtcpayParams & { extendedTxInfo?: false }): Promise<string>
-export async function createBtcpay(params: CreateBtcpayParams): Promise<string>
-export async function createBtcpay(params: CreateBtcpayParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_btcpay', camelKeysToSnakeKeys(params))
-}
-
-export async function createBurn(params: CreateBurnParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createBurn(params: CreateBurnParams & { extendedTxInfo?: false }): Promise<string>
-export async function createBurn(params: CreateBurnParams): Promise<string>
-export async function createBurn(params: CreateBurnParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_burn', camelKeysToSnakeKeys(params))
-}
-
-export async function createBet(params: CreateBetParams & { extendedTxInfo: true }): Promise<TxInfo>
-export async function createBet(params: CreateBetParams & { extendedTxInfo?: false }): Promise<string>
-export async function createBet(params: CreateBetParams): Promise<string>
-export async function createBet(params: CreateBetParams): Promise<string | TxInfo> {
-  return await counterpartyRpc<string | TxInfo>('create_bet', camelKeysToSnakeKeys(params))
-}
-
-export type TxInfo = {
+export type CreatedTxInfo = {
   tx_hex: string
   btc_in: number
   btc_out: number
@@ -442,9 +374,83 @@ export type TxInfo = {
   btc_fee: number
 }
 
-//// #endregion CreateAPI
+// functions
 
-//// #region OtherAPI
+export async function createSend(params: CreateSendParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createSend(params: CreateSendParams): Promise<string>
+export async function createSend(params: CreateSendParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_send', camelKeysToSnakeKeys(params))
+}
+
+export async function createIssuance(params: CreateIssuanceParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createIssuance(params: CreateIssuanceParams): Promise<string>
+export async function createIssuance(params: CreateIssuanceParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_issuance', camelKeysToSnakeKeys(params))
+}
+
+export async function createDividend(params: CreateDividendParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createDividend(params: CreateDividendParams): Promise<string>
+export async function createDividend(params: CreateDividendParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_dividend', camelKeysToSnakeKeys(params))
+}
+
+export async function createDispenser(params: CreateDispenserParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createDispenser(params: CreateDispenserParams): Promise<string>
+export async function createDispenser(params: CreateDispenserParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_dispenser', camelKeysToSnakeKeys(params))
+}
+
+export async function createSweep(params: CreateSweepParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createSweep(params: CreateSweepParams): Promise<string>
+export async function createSweep(params: CreateSweepParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_sweep', camelKeysToSnakeKeys(params))
+}
+
+export async function createOrder(params: CreateOrderParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createOrder(params: CreateOrderParams): Promise<string>
+export async function createOrder(params: CreateOrderParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_order', camelKeysToSnakeKeys(params))
+}
+
+export async function createCancel(params: CreateCancelParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createCancel(params: CreateCancelParams): Promise<string>
+export async function createCancel(params: CreateCancelParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_cancel', camelKeysToSnakeKeys(params))
+}
+
+export async function createBroadcast(params: CreateBroadcastParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createBroadcast(params: CreateBroadcastParams): Promise<string>
+export async function createBroadcast(params: CreateBroadcastParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_broadcast', camelKeysToSnakeKeys(params))
+}
+
+export async function createDestroy(params: CreateDestroyParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createDestroy(params: CreateDestroyParams): Promise<string>
+export async function createDestroy(params: CreateDestroyParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_destroy', camelKeysToSnakeKeys(params))
+}
+
+export async function createBtcpay(params: CreateBtcpayParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createBtcpay(params: CreateBtcpayParams): Promise<string>
+export async function createBtcpay(params: CreateBtcpayParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_btcpay', camelKeysToSnakeKeys(params))
+}
+
+export async function createBurn(params: CreateBurnParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createBurn(params: CreateBurnParams): Promise<string>
+export async function createBurn(params: CreateBurnParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_burn', camelKeysToSnakeKeys(params))
+}
+
+export async function createBet(params: CreateBetParams & { extendedTxInfo: true }): Promise<CreatedTxInfo>
+export async function createBet(params: CreateBetParams): Promise<string>
+export async function createBet(params: CreateBetParams): Promise<string | CreatedTxInfo> {
+  return await counterpartyRpc<string | CreatedTxInfo>('create_bet', camelKeysToSnakeKeys(params))
+}
+
+// #endregion
+
+// #region OtherCounterpartyAPI
 /*
 他には以下のAPIがあるようです
   get_dispenser_info
@@ -464,10 +470,17 @@ export type TxInfo = {
   unpack
 */
 
-export async function getAssetInfo(assets: string[]): Promise<AssetInfo[]> {
-  const params = { assets }
-  return await counterpartyRpc<AssetInfo[]>('get_asset_info', params)
+// input
+
+export type GetUnspentTxoutsParams = {
+  address: string
+  unconfirmed?: boolean // この値と無関係に未確認UTXOが返ってくるときと返ってこないときがある
+  unspentTxHash?: string // ドキュメントではboolだが実際はstring  txidを指定するとそのtx由来のutxoだけ返ってくる
+  orderBy?: string
 }
+
+// output
+
 export type AssetInfo = {
   asset: string
   asset_longname: string | null
@@ -482,20 +495,12 @@ export type AssetInfo = {
   owner: string
 }
 
-export async function geHolders(asset: string): Promise<AssetInfo[]> {
-  const params = { asset }
-  return await counterpartyRpc<AssetInfo[]>('get_holders', params)
-}
 export type Holder = {
   address: string
   address_quantity: number | bigint
   escrow: number | null
 }
 
-export async function getBlockInfo(blockIndex: number): Promise<BlockInfo> {
-  const params = { block_index: blockIndex }
-  return await counterpartyRpc<BlockInfo>('get_block_info', params)
-}
 export type BlockInfo = {
   block_time: number
   messages_hash: string
@@ -507,20 +512,8 @@ export type BlockInfo = {
   block_hash: string
 }
 
-export async function getUnspentTxouts(
-  address: string,
-  { unconfirmed, unspentTxHash, orderBy }: { unconfirmed?: boolean; unspentTxHash?: string; orderBy?: string } = {},
-): Promise<MpUtxo[]> {
-  const params = {
-    address,
-    unconfirmed, // この値と無関係に未確認UTXOが返ってくるときと返ってこないときがある
-    unspent_tx_hash: unspentTxHash, // ドキュメントではboolだが実際はstring  txidを指定するとそのtx由来のutxoだけ返ってくるらしい
-    order_by: orderBy,
-  }
-  return await counterpartyRpc<MpUtxo[]>('get_unspent_txouts', params)
-}
-export type MpUtxo = {
-  confirmations: number // 未確認の場合はなぜか現在のブロック高が入っている
+export type UnspentTxout = {
+  confirmations: number // 未確認の場合は0じゃなくて現在のブロック高が入ってくる
   amount: number
   vout: number
   value: number
@@ -529,21 +522,37 @@ export type MpUtxo = {
   coinbase: number
 }
 
+// functions
+
+export async function getAssetInfo(assets: string[]): Promise<AssetInfo[]> {
+  const params = { assets }
+  return await counterpartyRpc<AssetInfo[]>('get_asset_info', params)
+}
+
+export async function getHolders(asset: string): Promise<Holder[]> {
+  const params = { asset }
+  return await counterpartyRpc<Holder[]>('get_holders', params)
+}
+
+export async function getBlockInfo(blockIndex: number): Promise<BlockInfo> {
+  const params = { block_index: blockIndex }
+  return await counterpartyRpc<BlockInfo>('get_block_info', params)
+}
+
+export async function getUnspentTxouts(params: GetUnspentTxoutsParams): Promise<UnspentTxout[]> {
+  return await counterpartyRpc<UnspentTxout[]>('get_unspent_txouts', camelKeysToSnakeKeys(params))
+}
+
 export async function getAssetNames(): Promise<string[]> {
   const params = {}
   return await counterpartyRpc<string[]>('get_asset_names', params)
 }
 
-//// #endregion OtherAPI
-
-// #endregion CounterpartyAPI
+// #endregion
 
 // #region CounterblockAPI
 /*
 参考: https://github.com/monaparty/counterblock/blob/monaparty-develop/counterblock/lib/processor/api.py
-
-必要に応じて個別のラップ関数を追加してください
-検証にはこちらのツールが便利です https://monapalette.komikikaku.com/monaparty_api
 
 他には以下のAPIがあるようです
   get_messagefeed_messages_by_index
@@ -556,6 +565,41 @@ export async function getAssetNames(): Promise<string[]> {
   get_raw_transactions
 */
 
+// input
+
+export type CbGetAddressInfoParams = {
+  addresses: string[]
+  withUxtos?: boolean // "uxtos" API側のスペルミスをそのまま引き継ぎ
+  withLastTxnHashes?: boolean
+}
+
+// output
+
+export type CbChainAddressInfo = {
+  info: {
+    unconfirmedBalance: string
+    balanceSat: string
+    balance: number
+    addrStr: string
+    unconfirmedBalanceSat: string
+  }
+  addr: string
+  block_height: number
+  uxtos?: {
+    // "uxtos" API側のスペルミスをそのまま引き継ぎ
+    ts: number
+    confirmations: number
+    amount: string
+    address: string
+    vout: number
+    txid: string
+    confirmationsFromCache: boolean
+  }[]
+  last_txns?: string[]
+}
+
+// functions
+
 export async function getChainBlockHeight(): Promise<number> {
   return await counterblockRpc<number>('get_chain_block_height', {})
 }
@@ -565,51 +609,21 @@ export async function broadcastTx(signedTxHex: string): Promise<string> {
   return await counterblockRpc<string>('broadcast_tx', params)
 }
 
-export async function getChainAddressInfo(
-  addresses: string[],
-  { withUtxos, withLastTxnHashes }: { withUtxos?: boolean; withLastTxnHashes?: boolean } = {},
-): Promise<CbChainAddressInfo[]> {
-  const params = {
-    addresses,
-    with_uxtos: withUtxos,
-    with_last_txn_hashes: withLastTxnHashes, // ドキュメントではintだが実際はtrue/false
-  }
-  return await counterblockRpc<CbChainAddressInfo[]>('get_chain_address_info', params)
-}
-export type CbChainAddressInfo = {
-  info: CbAddressInfo
-  addr: string
-  block_height: number
-  uxtos?: CbUtxo[]
-  last_txns?: string[]
-}
-export type CbAddressInfo = {
-  unconfirmedBalance: string
-  balanceSat: string
-  balance: number
-  addrStr: string
-  unconfirmedBalanceSat: string
-}
-export type CbUtxo = {
-  ts: number
-  confirmations: number
-  amount: string
-  address: string
-  vout: number
-  txid: string
-  confirmationsFromCache: boolean
+export async function getChainAddressInfo(params: CbGetAddressInfoParams): Promise<CbChainAddressInfo[]> {
+  return await counterblockRpc<CbChainAddressInfo[]>('get_chain_address_info', camelKeysToSnakeKeys(params))
 }
 
-// #endregion CounterblockAPI
+// #endregion
 
 // #region RPC
 
 export async function counterblockRpc<T = JsonValue>(
   method: string,
   params: JsonValue,
-  endpoint = bestEndpoint || MONAPARTY_ENDPOINTS[0]!,
+  endpoint = bestEndpoint || endpoints[0],
 ): Promise<T> {
   const body = { jsonrpc: '2.0', id: 0, method, params }
+  if (!endpoint) throw new Error('No Monaparty endpoint specified')
   const res = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -629,7 +643,7 @@ export async function counterpartyRpc<T = JsonValue>(method: string, params: Jso
   return await counterblockRpc<T>('proxy_to_counterpartyd', cbParams, endpoint)
 }
 
-// #endregion RPC
+// #endregion
 
 // #region Utilities
 
@@ -650,4 +664,4 @@ function camelKeysToSnakeKeys(params: JsonValue): JsonValue {
   return result
 }
 
-// #endregion Utilities
+// #endregion
